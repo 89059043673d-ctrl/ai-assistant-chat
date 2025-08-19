@@ -1,244 +1,178 @@
-'use client';
+"use client";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import { useChat } from "./ChatContext";
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkMath from 'remark-math';
-import rehypeKatex from 'rehype-katex';
-
-type Role = 'user' | 'assistant';
-
-type Msg = {
-  id: string;
-  role: Role;
-  content: string;
-  imagePreview?: string | null;
-};
-
-const STORAGE_KEY = 'chat-history-v1';
-const THEME_ATTR = 'data-theme';
+type ApiResp = { text?: string; error?: string };
 
 export default function Chat() {
-  const [messages, setMessages] = useState<Msg[]>([]);
-  const [text, setText] = useState('');
+  const { sessions, activeId, addMessage, setSidebarOpen } = useChat();
+  const session = sessions.find(s => s.id === activeId);
+  const [value, setValue] = useState("");
+  const [pending, setPending] = useState(false);
   const [file, setFile] = useState<File | null>(null);
-  const [isSending, setIsSending] = useState(false);
+  const listRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Переключатель "распознавание в браузере" (оставляем как визуальный тумблер)
-  const [browserSTT, setBrowserSTT] = useState(true);
-
-  // Тема (light/dark), хранится на <html data-theme="...">
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    if (typeof document !== 'undefined') {
-      return (document.documentElement.getAttribute(THEME_ATTR) as 'light' | 'dark') || 'dark';
-    }
-    return 'dark';
-  });
-
-  // === История: поднимаем при монтировании ===
+  // автоскролл вниз
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed: Msg[] = JSON.parse(raw);
-        setMessages(parsed);
-      } else {
-        // Если истории нет — показываем привет от бота
-        setMessages([
-          {
-            id: crypto.randomUUID(),
-            role: 'assistant',
-            content:
-              'Привет! Я твой личный ИИ-помощник по **коксохим-производству**. ' +
-              'Задавай вопросы — помогу с расчётами, формулами и технологическими аспектами.',
-          },
-        ]);
-      }
-    } catch {
-      // игнор
+    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
+  }, [session?.messages.length]);
+
+  // Web Speech API (диктовка)
+  const [rec, setRec] = useState<SpeechRecognition | null>(null);
+  const [recOn, setRecOn] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const Ctor: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (Ctor) {
+      const r: SpeechRecognition = new Ctor();
+      r.lang = "ru-RU";
+      r.interimResults = true;
+      r.onresult = (e: SpeechRecognitionEvent) => {
+        const t = Array.from(e.results).map(r => r[0].transcript).join(" ");
+        setValue(v => (v ? v + " " : "") + t);
+      };
+      r.onend = () => setRecOn(false);
+      setRec(r);
     }
   }, []);
 
-  // Сохраняем историю после любого изменения
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
-    } catch {
-      // игнор
-    }
-  }, [messages]);
-
-  // Тема — сразу на html
-  useEffect(() => {
-    if (typeof document !== 'undefined') {
-      document.documentElement.setAttribute(THEME_ATTR, theme);
-    }
-  }, [theme]);
-
-  function toggleTheme() {
-    const next = theme === 'dark' ? 'light' : 'dark';
-    setTheme(next);
-    try {
-      localStorage.setItem('theme', next);
-    } catch {}
+  async function toBase64(f: File): Promise<{ base64: string; type: string }> {
+    const buf = await f.arrayBuffer();
+    const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+    return { base64: b64, type: f.type || "image/png" };
   }
 
-  async function handleSend() {
-    const trimmed = text.trim();
-    if (!trimmed && !file) return;
+  async function onSend(e?: FormEvent) {
+    e?.preventDefault();
+    const text = value.trim();
+    if (!text && !file) return;
 
-    // Подготовим превью для UI
-    let preview: string | null = null;
-    if (file) {
-      preview = URL.createObjectURL(file);
+    setPending(true);
+
+    let imageBase64: string | undefined, imageType: string | undefined;
+    if (file && file.type.startsWith("image/")) {
+      const conv = await toBase64(file);
+      imageBase64 = conv.base64;
+      imageType = conv.type;
     }
 
-    const userMsg: Msg = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      content: trimmed || (file ? '(изображение)' : ''),
-      imagePreview: preview,
-    };
-    setMessages((m) => [...m, userMsg]);
-    setText('');
-    setIsSending(true);
-
-    // Готовим картинку в base64 для API
-    let imageBase64: string | null = null;
-    let imageType: string | null = null;
-    if (file) {
-      const buf = await file.arrayBuffer();
-      const bytes = new Uint8Array(buf);
-      imageBase64 = btoa(String.fromCharCode(...bytes));
-      imageType = file.type || 'image/png';
-    }
+    addMessage({ role: "user", text: text || "(изображение)", imageBase64, imageType });
 
     try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: trimmed,
-          imageBase64,
-          imageType,
-          browserSTT, // просто прокинем флажок (на будущее)
-        }),
+      const resp = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text, imageBase64, imageType }),
       });
+      const data: ApiResp = await resp.json();
 
-      if (!res.ok) throw new Error('bad response');
-      const data = await res.json();
-
-      const bot: Msg = {
-        id: crypto.randomUUID(),
-        role: 'assistant',
-        content: String(data.text || '…'),
-      };
-      setMessages((m) => [...m, bot]);
-    } catch (e) {
-      const err: Msg = {
-        id: crypto.randomUUID(),
-        role: 'assistant',
-        content:
-          'Не удалось получить ответ от модели. Проверьте баланс API-ключа в OpenAI Billing и переменную `OPENAI_API_KEY` на Vercel.',
-      };
-      setMessages((m) => [...m, err]);
+      if (resp.ok && data.text) {
+        addMessage({ role: "assistant", text: data.text });
+      } else {
+        const reason = data?.error || "Не удалось получить ответ от модели. Проверьте баланс API-ключа в OpenAI Billing и переменную OPENAI_API_KEY на Vercel.";
+        addMessage({ role: "assistant", text: reason });
+      }
+    } catch (err: any) {
+      addMessage({ role: "assistant", text: "Сеть недоступна или сервер вернул ошибку." });
     } finally {
-      setIsSending(false);
+      setPending(false);
+      setValue("");
       setFile(null);
-      if (preview) URL.revokeObjectURL(preview);
+      inputRef.current?.focus();
     }
-  }
-
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-  }
-
-  function newChat() {
-    setMessages([
-      {
-        id: crypto.randomUUID(),
-        role: 'assistant',
-        content:
-          'Привет! Я твой личный ИИ-помощник по **коксохим-производству**. ' +
-          'Задавай вопросы — помогу с расчётами, формулами и технологическими аспектами.',
-      },
-    ]);
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-    } catch {}
   }
 
   return (
-    <div className="chat-root">
-      {/* Шапка */}
-      <div className="chat-topbar">
-        <div className="title">Ваш ассистент</div>
-        <div className="actions">
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={browserSTT}
-              onChange={(e) => setBrowserSTT(e.target.checked)}
-            />
-            <span>Распознавание в браузере</span>
-          </label>
-
-          <button className="btn" onClick={toggleTheme}>
-            {theme === 'dark' ? '☀️ Светлая' : '🌙 Тёмная'}
-          </button>
-
-          <button className="btn ghost" onClick={newChat}>
-            Новый чат
-          </button>
-        </div>
+    <section className="chat">
+      <div className="chat__top">
+        <button className="btn" onClick={() => setSidebarOpen(true)}>☰</button>
+        <div className="spacer" />
+        <div className="tag">Голос: {rec ? (recOn ? "идёт запись…" : "готов") : "недоступен"}</div>
       </div>
 
-      {/* Лента */}
-      <div className="chat-list">
-        {messages.map((m) => (
-          <div key={m.id} className={`msg ${m.role === 'user' ? 'me' : 'bot'}`}>
-            {m.imagePreview && (
-              <div className="img">
-                {/* превью вложения пользователя */}
-                <img src={m.imagePreview} alt="attachment" />
-              </div>
+      <div className="messages" ref={listRef}>
+        {session?.messages.map((m) => (
+          <div key={m.id} className={`bubble ${m.role === "user" ? "bubble--me" : ""}`}>
+            <div className="bubble__role">{m.role === "user" ? "Вы" : "Ассистент"}</div>
+            {!!m.imageBase64 && (
+              <>
+                <img
+                  src={`data:${m.imageType};base64,${m.imageBase64}`}
+                  alt="изображение пользователя"
+                  style={{ maxWidth: "100%", borderRadius: 10, border: "1px solid var(--border)", marginBottom: 8 }}
+                />
+                <hr className="hr" />
+              </>
             )}
-            {m.content && (
-              <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                {m.content}
-              </ReactMarkdown>
-            )}
+            <div dangerouslySetInnerHTML={{ __html: safeMd(m.text) }} />
           </div>
         ))}
       </div>
 
-      {/* Композер */}
-      <div className="composer">
-        <label className="file">
-          <input
-            type="file"
-            accept="image/*"
-            onChange={(e) => setFile(e.target.files?.[0] || null)}
+      <form className="composer" onSubmit={onSend}>
+        <div className="composer__inner">
+          <div className="toolbar">
+            {/* вложение */}
+            <label className="icon-btn" title="Прикрепить изображение">
+              📎
+              <input
+                type="file"
+                accept="image/*"
+                style={{ display: "none" }}
+                onChange={(e) => setFile(e.target.files?.[0] || null)}
+              />
+            </label>
+
+            {/* микрофон */}
+            <button
+              type="button"
+              className="icon-btn"
+              title="Диктовка (Web Speech API)"
+              onClick={() => {
+                if (!rec) return alert("Браузер не поддерживает распознавание речи");
+                if (recOn) { rec.stop(); setRecOn(false); }
+                else { setValue(""); rec.start(); setRecOn(true); }
+              }}
+            >
+              🎤
+            </button>
+          </div>
+
+          <textarea
+            ref={inputRef}
+            className="input"
+            rows={1}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="Спросите что-нибудь…"
           />
-          {file ? 'Файл: ' + file.name : '📎 Прикрепить фото'}
-        </label>
 
-        <textarea
-          placeholder="Спросите что-нибудь…"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={handleKeyDown}
-          rows={1}
-        />
+          <button className="btn btn--primary send-btn" disabled={pending}>
+            {pending ? "…" : "Отправить"}
+          </button>
+        </div>
 
-        <button className="btn primary" onClick={handleSend} disabled={isSending}>
-          {isSending ? 'Отправка…' : 'Отправить'}
-        </button>
-      </div>
-    </div>
+        {/* превью файла */}
+        {file && (
+          <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center" }}>
+            <div className="tag">Файл: {file.name}</div>
+            <button type="button" className="btn" onClick={() => setFile(null)}>Убрать</button>
+          </div>
+        )}
+      </form>
+    </section>
   );
 }
 
-/* ====== Стили компонента (минимально, под переменные темы) ====== */
+/* Очень небольшой «рендер Markdown» для жирного/курсива и переносов (чтобы сообщения выглядели приятно).
+   Никаких внешних библиотек. */
+function safeMd(t: string) {
+  let s = (t || "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" } as any)[c]);
+  s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/\*(.+?)\*/g, "<em>$1</em>");
+  s = s.replace(/`(.+?)`/g, "<code>$1</code>");
+  s = s.replace(/\n/g, "<br/>");
+  return s;
+}
