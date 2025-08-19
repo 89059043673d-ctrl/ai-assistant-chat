@@ -1,0 +1,1 @@
+import './globals.css';export const metadata={title:'Мой ИИ-ассистент',description:'Чат с голосом и формулами'};export default function RootLayout({children}:{children:React.ReactNode}){return(<html lang='ru'><head><link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css' crossOrigin='anonymous'/></head><body>{children}</body></html>);}

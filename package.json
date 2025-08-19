@@ -1,0 +1,22 @@
+{
+  "name": "ai-assistant-site-nextjs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev -p 8787",
+    "build": "next build",
+    "start": "next start -p 8787"
+  },
+  "dependencies": {
+    "katex": "^0.16.9",
+    "next": "14.2.10",
+    "openai": "^4.58.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-markdown": "^9.0.3",
+    "rehype-katex": "^7.0.0",
+    "remark-math": "^6.0.0",
+    "lucide-react": "^0.441.0"
+  }
+}
