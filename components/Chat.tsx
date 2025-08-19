@@ -21,15 +21,17 @@ const LS_THREADS = "ai.chat.threads.v1";
 const LS_ACTIVE = "ai.chat.active.v1";
 const LS_THEME = "ai.chat.theme.v1"; // "light" | "dark"
 
+const hasWindow = () =>
+  typeof window !== "undefined" && typeof localStorage !== "undefined";
+
 function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
+const now = () => Date.now();
 
-function now() {
-  return Date.now();
-}
-
+/** Safe localStorage helpers (не трогаем на сервере) */
 function loadThreads(): Thread[] {
+  if (!hasWindow()) return [];
   try {
     const raw = localStorage.getItem(LS_THREADS);
     return raw ? (JSON.parse(raw) as Thread[]) : [];
@@ -37,25 +39,25 @@ function loadThreads(): Thread[] {
     return [];
   }
 }
-
 function saveThreads(list: Thread[]) {
+  if (!hasWindow()) return;
   localStorage.setItem(LS_THREADS, JSON.stringify(list));
 }
-
 function loadActiveId(): string | null {
+  if (!hasWindow()) return null;
   return localStorage.getItem(LS_ACTIVE);
 }
-
 function saveActiveId(id: string) {
+  if (!hasWindow()) return;
   localStorage.setItem(LS_ACTIVE, id);
 }
-
 function loadTheme(): "light" | "dark" {
+  if (!hasWindow()) return "light";
   const t = localStorage.getItem(LS_THEME);
   return t === "dark" ? "dark" : "light";
 }
-
 function saveTheme(t: "light" | "dark") {
+  if (!hasWindow()) return;
   localStorage.setItem(LS_THEME, t);
 }
 
@@ -66,16 +68,19 @@ export default function Chat() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [recording, setRecording] = useState(false);
+  const [theme, setTheme] = useState<"light" | "dark">("light"); // дефолт без localStorage
 
-  // для скролла вниз
   const endRef = useRef<HTMLDivElement | null>(null);
 
-  // --------- инициализация
+  // --------- инициализация (только в браузере)
   useEffect(() => {
+    // тема
+    setTheme(loadTheme());
+
+    // история
     const t = loadThreads();
     const id = loadActiveId();
     if (t.length === 0) {
-      // стартовый поток
       const first: Thread = {
         id: uid(),
         title: "Привет =)",
@@ -99,13 +104,20 @@ export default function Chat() {
     }
   }, []);
 
-  // --------- вычисления
+  // применяем тему без перезагрузки
+  useEffect(() => {
+    if (!hasWindow()) return;
+    const root = document.documentElement;
+    if (theme === "dark") root.classList.add("dark");
+    else root.classList.remove("dark");
+    saveTheme(theme);
+  }, [theme]);
+
   const active = useMemo(
     () => threads.find((x) => x.id === activeId) ?? null,
     [threads, activeId]
   );
 
-  // авто-скролл
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [active?.messages.length]);
@@ -121,7 +133,7 @@ export default function Chat() {
           id: uid(),
           role: "assistant",
           content:
-            "Готов! Напиши вопрос — и я постараюсь помочь. (Если ответа нет — проверь баланс OpenAI и переменную `OPENAI_API_KEY` на Vercel.)",
+            "Готов! Напиши вопрос — и я постараюсь помочь. (Если ответа нет — проверь баланс OpenAI и `OPENAI_API_KEY` на Vercel.)",
         },
       ],
     };
@@ -150,19 +162,6 @@ export default function Chat() {
     }
   }
 
-  // --------- тема
-  const [theme, setTheme] = useState<"light" | "dark">(loadTheme());
-  useEffect(() => {
-    // применяем тему без перезагрузки
-    const root = document.documentElement;
-    if (theme === "dark") {
-      root.classList.add("dark");
-    } else {
-      root.classList.remove("dark");
-    }
-    saveTheme(theme);
-  }, [theme]);
-
   // --------- отправка
   async function sendMessage(text?: string) {
     const content = (text ?? input).trim();
@@ -177,7 +176,6 @@ export default function Chat() {
     setThreads(updThreads);
     saveThreads(updThreads);
 
-    // обновить название чата по первой реплике пользователя
     if (active.title === "Новый чат" || active.title === "Привет =)") {
       renameThread(active.id, content.slice(0, 30));
     }
@@ -197,12 +195,11 @@ export default function Chat() {
       let replyText = "";
       try {
         const data = await res.json();
-        // поддержим оба варианта бэка
         replyText =
           data?.reply ??
           data?.message ??
           data?.content ??
-          JSON.stringify(data);
+          (typeof data === "string" ? data : JSON.stringify(data));
       } catch {
         replyText = await res.text();
       }
@@ -213,10 +210,7 @@ export default function Chat() {
         content: replyText || (res.ok ? "" : "Не удалось получить ответ."),
       };
 
-      const updB = {
-        ...updA,
-        messages: [...updA.messages, botMsg],
-      };
+      const updB = { ...updA, messages: [...updA.messages, botMsg] };
       const updThreads2 = threads.map((t) => (t.id === active.id ? updB : t));
       setThreads(updThreads2);
       saveThreads(updThreads2);
@@ -228,10 +222,7 @@ export default function Chat() {
           e?.message ??
           "Не удалось получить ответ от модели. Проверьте `OPENAI_API_KEY` и баланс в OpenAI Billing.",
       };
-      const updB = {
-        ...active,
-        messages: [...active.messages, userMsg, botMsg],
-      };
+      const updB = { ...active, messages: [...active.messages, userMsg, botMsg] };
       const updThreads2 = threads.map((t) => (t.id === active.id ? updB : t));
       setThreads(updThreads2);
       saveThreads(updThreads2);
@@ -240,7 +231,7 @@ export default function Chat() {
     }
   }
 
-  // --------- диктовка (без типов, чтобы не падать на сборке)
+  // --------- диктовка (без типов, чтобы сборка не падала)
   function toggleVoice() {
     // @ts-ignore
     const Rec =
@@ -278,7 +269,7 @@ export default function Chat() {
     }
   }
 
-  // --------- прикрепление файла (минимально — показываем имя)
+  // --------- прикрепление файла (минимум)
   async function onAttachFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f || !active) return;
@@ -289,10 +280,7 @@ export default function Chat() {
         f.size / 1024
       )} КБ)`,
     };
-    const upd = {
-      ...active,
-      messages: [...active.messages, note],
-    };
+    const upd = { ...active, messages: [...active.messages, note] };
     const list = threads.map((t) => (t.id === active.id ? upd : t));
     setThreads(list);
     saveThreads(list);
@@ -302,7 +290,7 @@ export default function Chat() {
   // --------- отрисовка
   return (
     <div className="flex h-[100dvh] w-full bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
-      {/* Левая колонка — история чатов */}
+      {/* Левая колонка — история */}
       <aside className="hidden w-64 shrink-0 border-r border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900 md:flex md:flex-col">
         <div className="mb-2 flex items-center justify-between">
           <div className="text-sm font-medium">История</div>
