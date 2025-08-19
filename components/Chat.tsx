@@ -1,183 +1,107 @@
 "use client";
-import { FormEvent, useEffect, useRef, useState } from "react";
-import { useChat } from "./ChatContext";
 
-/* --- ВАЖНО: минимальные тайпинги для Web Speech API, чтобы сборка прошла --- */
-type SpeechRecognition = any;
-type SpeechRecognitionEvent = any;
+import React, { useEffect, useRef, useState } from "react";
 
-/* Ответ API */
-type ApiResp = { text?: string; error?: string };
+type Role = "user" | "assistant";
+type Message = { role: Role; content: string };
 
 export default function Chat() {
-  const { sessions, activeId, addMessage, setSidebarOpen } = useChat();
-  const session = sessions.find(s => s.id === activeId);
-  const [value, setValue] = useState("");
-  const [pending, setPending] = useState(false);
+  const [messages, setMessages] = useState<Message[]>([
+    {
+      role: "assistant",
+      content:
+        "Привет! Я твой личный ИИ-помощник по коксохим-производству. Задавай вопросы — помогу с расчётами, формулами и технологическими аспектами.",
+    },
+  ]);
+  const [input, setInput] = useState("");
+  const [isSending, setIsSending] = useState(false);
   const [file, setFile] = useState<File | null>(null);
-  const listRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // автоскролл вниз при новых сообщениях
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // автопрокрутка вниз
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
-  }, [session?.messages.length]);
+  }, [messages]);
 
-  // Web Speech API (диктовка)
-  const [rec, setRec] = useState<SpeechRecognition | null>(null);
-  const [recOn, setRecOn] = useState(false);
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (isSending) return;
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const Ctor: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (Ctor) {
-      const r: SpeechRecognition = new Ctor();
-      r.lang = "ru-RU";
-      r.interimResults = true;
-      (r as any).onresult = (e: SpeechRecognitionEvent) => {
-        const t = Array.from((e as any).results).map((r: any) => r[0].transcript).join(" ");
-        setValue(v => (v ? v + " " : "") + t);
-      };
-      (r as any).onend = () => setRecOn(false);
-      setRec(r);
-    }
-  }, []);
-
-  async function toBase64(f: File): Promise<{ base64: string; type: string }> {
-    const buf = await f.arrayBuffer();
-    const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
-    return { base64: b64, type: f.type || "image/png" };
-  }
-
-  async function onSend(e?: FormEvent) {
-    e?.preventDefault();
-    const text = value.trim();
+    const text = input.trim();
     if (!text && !file) return;
 
-    setPending(true);
-
-    let imageBase64: string | undefined, imageType: string | undefined;
-    if (file && file.type.startsWith("image/")) {
-      const conv = await toBase64(file);
-      imageBase64 = conv.base64;
-      imageType = conv.type;
-    }
-
-    addMessage({ role: "user", text: text || "(изображение)", imageBase64, imageType });
+    // локально добавляем сообщение пользователя
+    const nextMessages = [...messages, { role: "user", content: text || "📎 Файл" }];
+    setMessages(nextMessages);
+    setInput("");
+    setIsSending(true);
 
     try {
-      const resp = await fetch("/api/chat", {
+      // формируем тело запроса: текст + (по возможности) имя файла
+      const body: any = { messages: nextMessages };
+      if (file) {
+        body.fileName = file.name;
+      }
+
+      const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, imageBase64, imageType }),
+        body: JSON.stringify(body),
       });
-      const data: ApiResp = await resp.json();
 
-      if (resp.ok && data.text) {
-        addMessage({ role: "assistant", text: data.text });
+      // читаем ответ: пытаемся понять формат
+      let assistantText = "";
+      if (res.headers.get("content-type")?.includes("application/json")) {
+        const data = await res.json();
+        assistantText =
+          data.reply ?? data.message ?? data.content ?? "Не удалось разобрать ответ модели.";
       } else {
-        const reason =
-          data?.error ||
-          "Не удалось получить ответ от модели. Проверьте баланс API-ключа в OpenAI Billing и переменную OPENAI_API_KEY на Vercel.";
-        addMessage({ role: "assistant", text: reason });
+        assistantText = await res.text();
       }
-    } catch {
-      addMessage({ role: "assistant", text: "Сеть недоступна или сервер вернул ошибку." });
+
+      setMessages((prev) => [...prev, { role: "assistant", content: assistantText }]);
+    } catch (err: any) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content:
+            "Не удалось получить ответ от модели. Проверьте баланс API-ключа в OpenAI Billing и переменную окружения OPENAI_API_KEY на Vercel.",
+        },
+      ]);
     } finally {
-      setPending(false);
-      setValue("");
+      setIsSending(false);
       setFile(null);
-      inputRef.current?.focus();
+    }
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    // Enter — отправка, Shift+Enter — новая строка
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      (e.currentTarget.form as HTMLFormElement | null)?.requestSubmit();
     }
   }
 
   return (
-    <section className="chat">
-      <div className="chat__top">
-        <button className="btn" onClick={() => setSidebarOpen(true)}>☰</button>
-        <div className="spacer" />
-        <div className="tag">Голос: {rec ? (recOn ? "идёт запись…" : "готов") : "недоступен"}</div>
+    <div className="flex h-[100dvh] w-full flex-col bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
+      {/* Верхняя панель */}
+      <div className="flex items-center justify-between border-b border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="text-sm font-medium">Ваш ассистент</div>
+        <div className="text-xs text-zinc-500">Голос: готов</div>
       </div>
 
-      <div className="messages" ref={listRef}>
-        {session?.messages.map((m) => (
-          <div key={m.id} className={`bubble ${m.role === "user" ? "bubble--me" : ""}`}>
-            <div className="bubble__role">{m.role === "user" ? "Вы" : "Ассистент"}</div>
-            {!!m.imageBase64 && (
-              <>
-                <img
-                  src={`data:${m.imageType};base64,${m.imageBase64}`}
-                  alt="изображение пользователя"
-                  style={{ maxWidth: "100%", borderRadius: 10, border: "1px solid var(--border)", marginBottom: 8 }}
-                />
-                <hr className="hr" />
-              </>
-            )}
-            <div dangerouslySetInnerHTML={{ __html: safeMd(m.text) }} />
-          </div>
-        ))}
-      </div>
-
-      <form className="composer" onSubmit={onSend}>
-        <div className="composer__inner">
-          <div className="toolbar">
-            {/* вложение */}
-            <label className="icon-btn" title="Прикрепить изображение">
-              📎
-              <input
-                type="file"
-                accept="image/*"
-                style={{ display: "none" }}
-                onChange={(e) => setFile(e.target.files?.[0] || null)}
-              />
-            </label>
-
-            {/* микрофон */}
-            <button
-              type="button"
-              className="icon-btn"
-              title="Диктовка (Web Speech API)"
-              onClick={() => {
-                if (!rec) return alert("Браузер не поддерживает распознавание речи");
-                if (recOn) { (rec as any).stop(); setRecOn(false); }
-                else { setValue(""); (rec as any).start(); setRecOn(true); }
-              }}
-            >
-              🎤
-            </button>
-          </div>
-
-          <textarea
-            ref={inputRef}
-            className="input"
-            rows={1}
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder="Спросите что-нибудь…"
-          />
-
-          <button className="btn btn--primary send-btn" disabled={pending}>
-            {pending ? "…" : "Отправить"}
-          </button>
-        </div>
-
-        {file && (
-          <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center" }}>
-            <div className="tag">Файл: {file.name}</div>
-            <button type="button" className="btn" onClick={() => setFile(null)}>Убрать</button>
-          </div>
-        )}
-      </form>
-    </section>
-  );
-}
-
-/* мини-«рендер Markdown» */
-function safeMd(t: string) {
-  let s = (t || "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" } as any)[c]);
-  s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-  s = s.replace(/\*(.+?)\*/g, "<em>$1</em>");
-  s = s.replace(/`(.+?)`/g, "<code>$1</code>");
-  s = s.replace(/\n/g, "<br/>");
-  return s;
-}
+      {/* Лента сообщений */}
+      <div ref={listRef} className="flex-1 overflow-auto px-3 py-4 sm:px-5">
+        <div className="mx-auto max-w-3xl space-y-3">
+          {messages.map((m, i) => (
+            <div key={i} className="flex">
+              <div
+                className={
+                  m.role === "assistant"
+                    ? "ml-0 mr-auto max-w-[90%] rounded-2xl bg-zinc-100 px-4 py-3 text-sm dark:bg-zinc-800"
+                    : "ml-auto mr-0 max-w-[90%] rounded-2xl bg-blue-600 px-4 py-3 text-sm text-white"
+                }
+              >
+                {
