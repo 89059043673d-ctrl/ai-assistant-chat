@@ -1,1 +1,64 @@
-:root{--bg:#0b1020;--panel:#0f1530;--line:#1e2748;--text:#e8eaf6;--muted:#9aa3c7;--accent:#c3c9ff;--bubble-user:#24305a;--bubble-ai:#162042}*{box-sizing:border-box}html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif}#app{display:flex;flex-direction:column;min-height:100vh;max-width:980px;margin:0 auto}header{position:sticky;top:0;z-index:10;background:var(--panel);border-bottom:1px solid var(--line);padding:12px 14px;display:flex;align-items:center;justify-content:space-between}h1{margin:0;font-size:18px;color:var(--accent)}main{flex:1;padding:16px 12px;display:flex;flex-direction:column;gap:14px}footer{background:var(--panel);border-top:1px solid var(--line);padding:10px}.form{display:flex;gap:8px}.input{flex:1;border:1px solid #28305a;border-radius:10px;background:#0b1020;color:var(--text);padding:10px 12px}.btn{border:1px solid #34407a;border-radius:10px;background:#1b2550;color:#d6dbff;padding:10px 14px;cursor:pointer}.btn:hover{filter:brightness(1.1)}.chat{display:flex;flex-direction:column;gap:14px}.msg{display:flex;gap:12px;align-items:flex-start}.avatar{width:32px;height:32px;border-radius:50%;background:#1c2345;display:flex;align-items:center;justify-content:center}.msg.user .bubble{background:var(--bubble-user)}.msg.ai .bubble{background:var(--bubble-ai)}.bubble{padding:12px 14px;border-radius:12px;max-width:75%;white-space:pre-wrap;line-height:1.5}.kb-chip{border:1px solid #2b356e;padding:2px 6px;border-radius:6px;color:var(--muted);font-size:12px}
+/* app/globals.css */
+
+/* Сброс и базовая типографика */
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Noto Sans", Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Токены темы (по умолчанию темная/светлая через class на <html>) */
+:root {
+  --bg: #0b0f17;
+  --fg: #e5e7eb;
+  --muted: #9ca3af;
+  --card: #111827;
+  --border: #1f2937;
+  --accent: #3b82f6;
+}
+
+html.light {
+  --bg: #ffffff;
+  --fg: #111827;
+  --muted: #6b7280;
+  --card: #f3f4f6;
+  --border: #e5e7eb;
+  --accent: #2563eb;
+}
+
+html.dark {
+  --bg: #0b0f17;
+  --fg: #e5e7eb;
+  --muted: #9ca3af;
+  --card: #111827;
+  --border: #1f2937;
+  --accent: #3b82f6;
+}
+
+/* Применение темы к странице */
+html, body {
+  background: var(--bg);
+  color: var(--fg);
+}
+
+/* Ссылки/кнопки наследуют тему */
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+button, input, textarea, select { font: inherit; color: inherit; }
+
+/* Плейсхолдеры (чтобы были спокойного цвета) */
+::placeholder { color: var(--muted); opacity: 1; }
+
+/* Небольшие утилити-классы (можешь использовать где нужно) */
+.bg-card { background: var(--card); }
+.border-default { border-color: var(--border); }
+.text-muted { color: var(--muted); }
+
+/* Плавные переходы цветов после первого рендера (по желанию)
+   Если где-то захочешь включить — добавь класс 'theme-ready' на <html>. */
+html.theme-ready * {
+  transition: background-color .2s ease, color .2s ease, border-color .2s ease;
+}
