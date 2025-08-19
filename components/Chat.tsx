@@ -2,6 +2,11 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { useChat } from "./ChatContext";
 
+/* --- ВАЖНО: минимальные тайпинги для Web Speech API, чтобы сборка прошла --- */
+type SpeechRecognition = any;
+type SpeechRecognitionEvent = any;
+
+/* Ответ API */
 type ApiResp = { text?: string; error?: string };
 
 export default function Chat() {
@@ -13,7 +18,7 @@ export default function Chat() {
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // автоскролл вниз
+  // автоскролл вниз при новых сообщениях
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
   }, [session?.messages.length]);
@@ -29,11 +34,11 @@ export default function Chat() {
       const r: SpeechRecognition = new Ctor();
       r.lang = "ru-RU";
       r.interimResults = true;
-      r.onresult = (e: SpeechRecognitionEvent) => {
-        const t = Array.from(e.results).map(r => r[0].transcript).join(" ");
+      (r as any).onresult = (e: SpeechRecognitionEvent) => {
+        const t = Array.from((e as any).results).map((r: any) => r[0].transcript).join(" ");
         setValue(v => (v ? v + " " : "") + t);
       };
-      r.onend = () => setRecOn(false);
+      (r as any).onend = () => setRecOn(false);
       setRec(r);
     }
   }, []);
@@ -71,10 +76,12 @@ export default function Chat() {
       if (resp.ok && data.text) {
         addMessage({ role: "assistant", text: data.text });
       } else {
-        const reason = data?.error || "Не удалось получить ответ от модели. Проверьте баланс API-ключа в OpenAI Billing и переменную OPENAI_API_KEY на Vercel.";
+        const reason =
+          data?.error ||
+          "Не удалось получить ответ от модели. Проверьте баланс API-ключа в OpenAI Billing и переменную OPENAI_API_KEY на Vercel.";
         addMessage({ role: "assistant", text: reason });
       }
-    } catch (err: any) {
+    } catch {
       addMessage({ role: "assistant", text: "Сеть недоступна или сервер вернул ошибку." });
     } finally {
       setPending(false);
@@ -132,8 +139,8 @@ export default function Chat() {
               title="Диктовка (Web Speech API)"
               onClick={() => {
                 if (!rec) return alert("Браузер не поддерживает распознавание речи");
-                if (recOn) { rec.stop(); setRecOn(false); }
-                else { setValue(""); rec.start(); setRecOn(true); }
+                if (recOn) { (rec as any).stop(); setRecOn(false); }
+                else { setValue(""); (rec as any).start(); setRecOn(true); }
               }}
             >
               🎤
@@ -154,7 +161,6 @@ export default function Chat() {
           </button>
         </div>
 
-        {/* превью файла */}
         {file && (
           <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center" }}>
             <div className="tag">Файл: {file.name}</div>
@@ -166,8 +172,7 @@ export default function Chat() {
   );
 }
 
-/* Очень небольшой «рендер Markdown» для жирного/курсива и переносов (чтобы сообщения выглядели приятно).
-   Никаких внешних библиотек. */
+/* мини-«рендер Markdown» */
 function safeMd(t: string) {
   let s = (t || "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" } as any)[c]);
   s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
