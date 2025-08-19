@@ -1,1 +1,49 @@
-import OpenAI from 'openai';export const runtime='nodejs';export const dynamic='force-dynamic';function sys(kb:any[]=[]){if(!kb?.length)return 'You are a helpful assistant. Output math formulas in LaTeX when appropriate.';const parts=kb.map(d=>`### ${d.name}\n${d.content}`).join('\n\n');return `You are a helpful assistant. Knowledge base:\n\n${parts}`;}export async function POST(req:Request){try{const {message,kb}=await req.json();const client=new OpenAI({apiKey:process.env.OPENAI_API_KEY});const r=await client.responses.create({model:process.env.MODEL||'gpt-4o-mini',input:[{role:'system',content:sys(kb)},{role:'user',content:String(message||'')}],});return Response.json({reply:(r as any).output_text||''});}catch(e:any){console.error(e);return new Response(JSON.stringify({error:'OpenAI error',detail:e?.message}),{status:500});}}
+import { NextResponse } from 'next/server';
+import OpenAI from 'openai';
+
+export const runtime = 'nodejs'; // оставим node-окружение
+
+function systemPrompt() {
+  return (
+    'Ты вежливый и точный ИИ-помощник по коксохим-производству. ' +
+    'Отвечай кратко и по делу. Если вопрос вне темы — предупреди и постарайся ' +
+    'переформулировать так, чтобы вернуться к тематике коксохимии. ' +
+    'Если пользователь присылает изображение, сначала опиши, что видишь, ' +
+    'затем дай полезные замечания по теме.'
+  );
+}
+
+export async function POST(req: Request) {
+  try {
+    const { message, imageBase64, imageType } = await req.json();
+
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const model = process.env.MODEL || 'gpt-4o-mini';
+
+    const userContent: any[] = [{ type: 'text', text: String(message || '') }];
+    if (imageBase64 && imageType) {
+      userContent.push({
+        type: 'input_image',
+        image_base64: imageBase64,
+        mime_type: imageType,
+      });
+    }
+
+    const resp = await client.responses.create({
+      model,
+      input: [
+        { role: 'system', content: systemPrompt() },
+        { role: 'user', content: userContent },
+      ],
+      temperature: 0.3,
+    });
+
+    const text = (resp as any).output_text || '…';
+    return NextResponse.json({ text });
+  } catch (e: any) {
+    return NextResponse.json(
+      { error: 'failed', details: e?.message || String(e) },
+      { status: 500 }
+    );
+  }
+}
