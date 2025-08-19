@@ -1,33 +1,28 @@
 // app/layout.tsx
-import "./globals.css";
 import type { Metadata } from "next";
+import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Мой ИИ-ассистент",
-  description: "Чат с ассистентом",
+  description: "Чат с ассистентом: текст, файлы, голос. Светлая/тёмная тема, история диалогов.",
 };
 
-// Скрипт ставит класс 'light' или 'dark' на <html> ДО отрисовки,
-// чтобы тема не «прыгалa» при загрузке.
-const themeInitScript = `
-;(() => {
+const themeInit = `
+(function() {
   try {
-    const KEY = 'theme';
-    const saved = localStorage.getItem(KEY);
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    const mode = (saved === 'light' || saved === 'dark') ? saved : (prefersDark ? 'dark' : 'light');
-    const root = document.documentElement;
-    root.classList.remove('light','dark');
-    root.classList.add(mode);
-  } catch (_) {}
+    const saved = localStorage.getItem("theme");
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const t = saved || (prefersDark ? "dark" : "light");
+    document.documentElement.dataset.theme = t;
+  } catch(e) {}
 })();
 `;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="ru" suppressHydrationWarning>
+    <html lang="ru">
       <head>
-        <script id="__theme-init" dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+        <script dangerouslySetInnerHTML={{ __html: themeInit }} />
       </head>
       <body>{children}</body>
     </html>
