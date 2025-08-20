@@ -1,24 +1,29 @@
 {
   "name": "ai-assistant-site-nextjs",
-  "version": "0.1.0",
   "private": true,
+  "version": "0.1.0",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "lint": "next lint"
   },
   "dependencies": {
     "next": "14.2.10",
-    "react": "18.2.0",
-    "react-dom": "18.2.0",
-    "openai": "^4.55.0",
-    "lucide-react": "^0.446.0",
-    "clsx": "^2.1.0"
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "lucide-react": "^0.447.0",
+    "clsx": "^2.1.1"
   },
   "devDependencies": {
-    "typescript": "^5.5.4",
+    "typescript": "^5.6.2",
+    "@types/node": "^22.5.0",
+    "@types/react": "^18.2.74",
+    "@types/react-dom": "^18.2.24",
     "tailwindcss": "^3.4.10",
-    "postcss": "^8.4.41",
-    "autoprefixer": "^10.4.20"
+    "postcss": "^8.4.45",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^8.57.0",
+    "eslint-config-next": "14.2.10"
   }
 }
