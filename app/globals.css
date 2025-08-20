@@ -1,3 +1,36 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Гладкая прокрутка и цвет фона по теме */
+:root {
+  color-scheme: light dark;
+}
+html, body {
+  height: 100%;
+}
+body {
+  @apply bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100;
+}
+
+/* Устраняем «подпрыгивание» на iOS возле нижней панели */
+@supports (padding: max(0px)) {
+  .safe-bottom {
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+  }
+}
+
+/* Скрыть дефолтные полосы на мобильных */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(120, 120, 120, .3);
+  border-radius: 8px;
+}
+
+/* Текстовое поле без лишних отступов */
+textarea {
+  line-height: 1.4;
+}
