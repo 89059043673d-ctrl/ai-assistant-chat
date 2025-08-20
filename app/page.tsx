@@ -1,4 +1,5 @@
-import Chat from "@/components/Chat";
+// app/page.tsx
+import Chat from '@/components/Chat';
 
 export default function Page() {
   return <Chat />;
