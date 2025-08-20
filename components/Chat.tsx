@@ -1,443 +1,392 @@
-"use client";
+'use client';
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Menu,
+  Search,
+  Plus,
+  Paperclip,
+  Mic,
+  MicOff,
+  ArrowUp,
+} from 'lucide-react';
 
-type Role = "user" | "assistant" | "system" | "error";
+type Role = 'user' | 'assistant';
+type Message = { role: Role; content: string };
 
-interface Msg {
-  id: string;
-  role: Role;
-  content: string;
-}
-
-interface Thread {
+type ChatMeta = {
   id: string;
   title: string;
-  messages: Msg[];
   createdAt: number;
-}
+};
 
-const LS_THREADS = "ai.chat.threads.v1";
-const LS_ACTIVE = "ai.chat.active.v1";
-const LS_THEME = "ai.chat.theme.v1"; // "light" | "dark"
+type ChatThread = {
+  meta: ChatMeta;
+  messages: Message[];
+};
 
-const hasWindow = () =>
-  typeof window !== "undefined" && typeof localStorage !== "undefined";
+const SIDEBAR_WIDTH = 320;
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
-const now = () => Date.now();
 
-/** Safe localStorage helpers (не трогаем на сервере) */
-function loadThreads(): Thread[] {
-  if (!hasWindow()) return [];
-  try {
-    const raw = localStorage.getItem(LS_THREADS);
-    return raw ? (JSON.parse(raw) as Thread[]) : [];
-  } catch {
-    return [];
-  }
-}
-function saveThreads(list: Thread[]) {
-  if (!hasWindow()) return;
-  localStorage.setItem(LS_THREADS, JSON.stringify(list));
-}
-function loadActiveId(): string | null {
-  if (!hasWindow()) return null;
-  return localStorage.getItem(LS_ACTIVE);
-}
-function saveActiveId(id: string) {
-  if (!hasWindow()) return;
-  localStorage.setItem(LS_ACTIVE, id);
-}
-function loadTheme(): "light" | "dark" {
-  if (!hasWindow()) return "light";
-  const t = localStorage.getItem(LS_THEME);
-  return t === "dark" ? "dark" : "light";
-}
-function saveTheme(t: "light" | "dark") {
-  if (!hasWindow()) return;
-  localStorage.setItem(LS_THEME, t);
-}
+const STORAGE_KEY = 'ai-chat-threads';
+const CURRENT_ID_KEY = 'ai-chat-current-id';
 
 export default function Chat() {
-  // --------- состояние
-  const [threads, setThreads] = useState<Thread[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [input, setInput] = useState("");
+  // sidebar
+  const [open, setOpen] = useState(false);
+
+  // threads
+  const [threads, setThreads] = useState<ChatThread[]>([]);
+  const [currentId, setCurrentId] = useState<string | null>(null);
+
+  // compose
+  const [text, setText] = useState('');
+  const [file, setFile] = useState<File | null>(null);
   const [sending, setSending] = useState(false);
-  const [recording, setRecording] = useState(false);
-  const [theme, setTheme] = useState<"light" | "dark">("light"); // дефолт без localStorage
 
-  const endRef = useRef<HTMLDivElement | null>(null);
+  // voice
+  const [recOn, setRecOn] = useState(false);
+  const recRef = useRef<any>(null);
 
-  // --------- инициализация (только в браузере)
+  // load from localStorage
   useEffect(() => {
-    // тема
-    setTheme(loadTheme());
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      const saved = raw ? (JSON.parse(raw) as ChatThread[]) : [];
+      setThreads(saved);
 
-    // история
-    const t = loadThreads();
-    const id = loadActiveId();
-    if (t.length === 0) {
-      const first: Thread = {
-        id: uid(),
-        title: "Привет =)",
-        createdAt: now(),
-        messages: [
-          {
-            id: uid(),
-            role: "assistant",
-            content:
-              "Привет! Я твой личный ИИ-помощник по **коксохим-производству**. Задавай вопросы — помогу с расчётами, формулами и технологическими аспектами.",
-          },
-        ],
-      };
+      const savedId = localStorage.getItem(CURRENT_ID_KEY);
+      if (savedId && saved.some(t => t.meta.id === savedId)) {
+        setCurrentId(savedId);
+      } else {
+        const first = createThread('Новый чат');
+        setThreads([first]);
+        setCurrentId(first.meta.id);
+        persist([first], first.meta.id);
+      }
+    } catch {
+      const first = createThread('Новый чат');
       setThreads([first]);
-      setActiveId(first.id);
-      saveThreads([first]);
-      saveActiveId(first.id);
-    } else {
-      setThreads(t);
-      setActiveId(id ?? t[0].id);
+      setCurrentId(first.meta.id);
+      persist([first], first.meta.id);
     }
   }, []);
 
-  // применяем тему без перезагрузки
+  // speech recognition (без SSR)
   useEffect(() => {
-    if (!hasWindow()) return;
-    const root = document.documentElement;
-    if (theme === "dark") root.classList.add("dark");
-    else root.classList.remove("dark");
-    saveTheme(theme);
-  }, [theme]);
+    if (typeof window === 'undefined') return;
+    const SR =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+    if (!SR) return;
 
-  const active = useMemo(
-    () => threads.find((x) => x.id === activeId) ?? null,
-    [threads, activeId]
+    const rec = new SR();
+    rec.lang = 'ru-RU';
+    rec.interimResults = false;
+    rec.maxAlternatives = 1;
+    rec.onresult = (e: any) => {
+      const phrase = e.results?.[0]?.[0]?.transcript || '';
+      if (phrase) setText(prev => (prev ? prev + ' ' : '') + phrase);
+    };
+    rec.onend = () => setRecOn(false);
+    rec.onerror = () => setRecOn(false);
+    recRef.current = rec;
+  }, []);
+
+  const current = useMemo(
+    () => threads.find(t => t.meta.id === currentId) || null,
+    [threads, currentId]
   );
 
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [active?.messages.length]);
+  function persist(list: ChatThread[], id: string | null) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+    if (id) localStorage.setItem(CURRENT_ID_KEY, id);
+  }
 
-  // --------- история
-  function newThread() {
-    const th: Thread = {
-      id: uid(),
-      title: "Новый чат",
-      createdAt: now(),
-      messages: [
-        {
-          id: uid(),
-          role: "assistant",
-          content:
-            "Готов! Напиши вопрос — и я постараюсь помочь. (Если ответа нет — проверь баланс OpenAI и `OPENAI_API_KEY` на Vercel.)",
-        },
-      ],
+  function createThread(title: string): ChatThread {
+    return {
+      meta: { id: uid(), title, createdAt: Date.now() },
+      messages: [],
     };
-    const next = [th, ...threads];
-    setThreads(next);
-    setActiveId(th.id);
-    saveThreads(next);
-    saveActiveId(th.id);
   }
 
-  function renameThread(id: string, title: string) {
-    const next = threads.map((t) => (t.id === id ? { ...t, title } : t));
+  function addThread() {
+    const t = createThread('Новый чат');
+    const next = [t, ...threads];
     setThreads(next);
-    saveThreads(next);
+    setCurrentId(t.meta.id);
+    persist(next, t.meta.id);
+    setOpen(false);
   }
 
-  function removeThread(id: string) {
-    const next = threads.filter((t) => t.id !== id);
-    setThreads(next);
-    saveThreads(next);
-    if (activeId === id) {
-      const newActive = next[0]?.id ?? null;
-      setActiveId(newActive);
-      if (newActive) saveActiveId(newActive);
-      else localStorage.removeItem(LS_ACTIVE);
-    }
+  function setActive(id: string) {
+    setCurrentId(id);
+    persist(threads, id);
+    setOpen(false);
   }
 
-  // --------- отправка
-  async function sendMessage(text?: string) {
-    const content = (text ?? input).trim();
-    if (!active || !content || sending) return;
+  function onAttach(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (f) setFile(f);
+  }
 
-    setSending(true);
-    setInput("");
-
-    const userMsg: Msg = { id: uid(), role: "user", content };
-    const updA = { ...active, messages: [...active.messages, userMsg] };
-    const updThreads = threads.map((t) => (t.id === active.id ? updA : t));
-    setThreads(updThreads);
-    saveThreads(updThreads);
-
-    if (active.title === "Новый чат" || active.title === "Привет =)") {
-      renameThread(active.id, content.slice(0, 30));
-    }
-
-    try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: updA.messages.map(({ role, content }) => ({
-            role,
-            content,
-          })),
-        }),
-      });
-
-      let replyText = "";
+  function toggleRec() {
+    if (!recRef.current) return;
+    if (recOn) {
       try {
-        const data = await res.json();
-        replyText =
-          data?.reply ??
-          data?.message ??
-          data?.content ??
-          (typeof data === "string" ? data : JSON.stringify(data));
-      } catch {
-        replyText = await res.text();
-      }
+        recRef.current.stop();
+      } catch {}
+      setRecOn(false);
+    } else {
+      try {
+        recRef.current.start();
+        setRecOn(true);
+      } catch {}
+    }
+  }
 
-      const botMsg: Msg = {
-        id: uid(),
-        role: res.ok ? "assistant" : "error",
-        content: replyText || (res.ok ? "" : "Не удалось получить ответ."),
-      };
+  async function sendMessage() {
+    if (!text.trim() && !file) return;
+    if (!current) return;
 
-      const updB = { ...updA, messages: [...updA.messages, botMsg] };
-      const updThreads2 = threads.map((t) => (t.id === active.id ? updB : t));
-      setThreads(updThreads2);
-      saveThreads(updThreads2);
-    } catch (e: any) {
-      const botMsg: Msg = {
-        id: uid(),
-        role: "error",
-        content:
-          e?.message ??
-          "Не удалось получить ответ от модели. Проверьте `OPENAI_API_KEY` и баланс в OpenAI Billing.",
-      };
-      const updB = { ...active, messages: [...active.messages, userMsg, botMsg] };
-      const updThreads2 = threads.map((t) => (t.id === active.id ? updB : t));
-      setThreads(updThreads2);
-      saveThreads(updThreads2);
+    const userMsg: Message = { role: 'user', content: text.trim() || '(файл)' };
+    const updated: ChatThread[] = threads.map(t =>
+      t.meta.id === current.meta.id
+        ? { ...t, messages: [...t.messages, userMsg] }
+        : t
+    );
+    setThreads(updated);
+    setText('');
+    setFile(null);
+    setSending(true);
+    try {
+      const form = new FormData();
+      form.append('message', userMsg.content);
+      if (file) form.append('file', file);
+
+      const res = await fetch('/api/chat', { method: 'POST', body: form });
+      const data = await res.json().catch(() => ({}));
+
+      const reply: Message =
+        data?.message
+          ? { role: 'assistant', content: data.message as string }
+          : {
+              role: 'assistant',
+              content:
+                res.status === 429
+                  ? 'Лимит API. Проверьте биллинг OpenAI или ключ OPENAI_API_KEY.'
+                  : 'Не удалось получить ответ от модели.',
+            };
+
+      const after: ChatThread[] = (prev => {
+        const idx = prev.findIndex(t => t.meta.id === current.meta.id);
+        if (idx === -1) return prev;
+        const copy = [...prev];
+        const t = copy[idx];
+        // первый ответ — формируем заголовок чата
+        const title =
+          t.messages.length === 0 && userMsg.content
+            ? userMsg.content.slice(0, 40)
+            : t.meta.title;
+        copy[idx] = {
+          meta: { ...t.meta, title: title || t.meta.title },
+          messages: [...t.messages, userMsg, reply],
+        };
+        return copy;
+      })(updated);
+
+      setThreads(after);
+      persist(after, current.meta.id);
+    } catch {
+      const failed: ChatThread[] = threads.map(t =>
+        t.meta.id === current.meta.id
+          ? {
+              ...t,
+              messages: [
+                ...t.messages,
+                { role: 'assistant', content: 'Ошибка сети.' },
+              ],
+            }
+          : t
+      );
+      setThreads(failed);
+      persist(failed, current.meta.id);
     } finally {
       setSending(false);
     }
   }
 
-  // --------- диктовка (без типов, чтобы сборка не падала)
-  function toggleVoice() {
-    // @ts-ignore
-    const Rec =
-      typeof window !== "undefined"
-        ? (window as any).webkitSpeechRecognition ||
-          (window as any).SpeechRecognition
-        : null;
-
-    if (!Rec) {
-      alert("Распознавание речи не поддерживается этим браузером.");
-      return;
-    }
-    // @ts-ignore
-    const rec = new Rec();
-    rec.lang = "ru-RU";
-    rec.interimResults = false;
-    rec.maxAlternatives = 1;
-
-    if (!recording) {
-      setRecording(true);
-      rec.start();
-      rec.onresult = (e: any) => {
-        const text = e.results[0][0].transcript as string;
-        setRecording(false);
-        sendMessage(text);
-      };
-      rec.onerror = () => setRecording(false);
-      rec.onend = () => setRecording(false);
-    } else {
-      try {
-        // @ts-ignore
-        rec.stop();
-      } catch {}
-      setRecording(false);
+  function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
     }
   }
 
-  // --------- прикрепление файла (минимум)
-  async function onAttachFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0];
-    if (!f || !active) return;
-    const note: Msg = {
-      id: uid(),
-      role: "user",
-      content: `📎 Прикреплён файл: **${f.name}** (${Math.round(
-        f.size / 1024
-      )} КБ)`,
-    };
-    const upd = { ...active, messages: [...active.messages, note] };
-    const list = threads.map((t) => (t.id === active.id ? upd : t));
-    setThreads(list);
-    saveThreads(list);
-    e.target.value = "";
-  }
-
-  // --------- отрисовка
   return (
-    <div className="flex h-[100dvh] w-full bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
-      {/* Левая колонка — история */}
-      <aside className="hidden w-64 shrink-0 border-r border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900 md:flex md:flex-col">
-        <div className="mb-2 flex items-center justify-between">
-          <div className="text-sm font-medium">История</div>
-          <button
-            onClick={newThread}
-            className="rounded-md bg-zinc-900 px-2 py-1 text-xs text-white dark:bg-zinc-100 dark:text-zinc-900"
-          >
-            Новый чат
-          </button>
-        </div>
-
-        <div className="flex-1 space-y-1 overflow-y-auto pr-1">
-          {threads.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => {
-                setActiveId(t.id);
-                saveActiveId(t.id);
+    <div className="flex min-h-[100dvh] w-full bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
+      {/* Sidebar */}
+      <div
+        className="fixed inset-y-0 left-0 z-40 w-[--sb] -translate-x-full bg-white shadow-lg transition-transform duration-300 ease-out dark:bg-zinc-900 md:translate-x-0"
+        style={
+          {
+            // CSS var управляет шириной
+            ['--sb' as any]: `${SIDEBAR_WIDTH}px`,
+            transform: open ? 'translateX(0)' : undefined,
+          } as React.CSSProperties
+        }
+      >
+        <div className="flex h-full flex-col">
+          <div className="flex items-center gap-2 border-b border-zinc-200 p-3 dark:border-zinc-800">
+            <Search className="h-4 w-4 text-zinc-500" />
+            <input
+              placeholder="Поиск по чатам"
+              className="w-full bg-transparent outline-none placeholder:text-zinc-400"
+              onChange={(e) => {
+                const q = e.target.value.toLowerCase();
+                const raw = localStorage.getItem(STORAGE_KEY);
+                if (!raw) return;
+                const all = JSON.parse(raw) as ChatThread[];
+                const filtered = all.filter(t =>
+                  (t.meta.title || '').toLowerCase().includes(q)
+                );
+                setThreads(filtered.length ? filtered : all);
               }}
-              className={`w-full rounded-md px-2 py-2 text-left text-sm transition ${
-                t.id === activeId
-                  ? "bg-zinc-200 dark:bg-zinc-800"
-                  : "hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
-              }`}
-              title={new Date(t.createdAt).toLocaleString()}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="line-clamp-1">{t.title}</span>
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const nv = prompt("Название чата:", t.title)?.trim();
-                      if (nv) renameThread(t.id, nv);
-                    }}
-                    className="rounded px-1 text-xs hover:bg-zinc-300 dark:hover:bg-zinc-700"
-                    title="Переименовать"
-                  >
-                    ✏️
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (confirm("Удалить чат?")) removeThread(t.id);
-                    }}
-                    className="rounded px-1 text-xs hover:bg-zinc-300 dark:hover:bg-zinc-700"
-                    title="Удалить"
-                  >
-                    🗑️
-                  </button>
-                </div>
-              </div>
-            </button>
-          ))}
-        </div>
+            />
+          </div>
 
-        <div className="mt-3 flex items-center justify-between gap-2">
-          <button
-            onClick={() => setTheme(theme === "light" ? "dark" : "light")}
-            className="w-full rounded-md border border-zinc-300 px-2 py-1 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
-            title="Переключить тему"
-          >
-            Тема: {theme === "light" ? "светлая" : "тёмная"}
-          </button>
-        </div>
-      </aside>
-
-      {/* Центральная колонка — чат */}
-      <main className="flex min-w-0 flex-1 flex-col">
-        {/* Верхняя панель */}
-        <div className="flex items-center justify-between border-b border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900">
-          <div className="text-sm font-medium">Ваш ассистент</div>
-          <div className="flex items-center gap-2">
+          <div className="border-b border-zinc-200 p-3 dark:border-zinc-800">
             <button
-              onClick={() => setTheme(theme === "light" ? "dark" : "light")}
-              className="rounded-md px-2 py-1 text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800"
-              title="Переключить тему"
+              onClick={addThread}
+              className="flex w-full items-center justify-center gap-2 rounded-md bg-zinc-900 px-3 py-2 text-sm text-zinc-50 hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
             >
-              {theme === "light" ? "🌞" : "🌙"}
+              <Plus className="h-4 w-4" />
+              Новый чат
             </button>
           </div>
+
+          <div className="flex-1 overflow-y-auto p-2">
+            {threads.map((t) => (
+              <button
+                key={t.meta.id}
+                onClick={() => setActive(t.meta.id)}
+                className={`mb-1 w-full truncate rounded-md px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800 ${
+                  currentId === t.meta.id
+                    ? 'bg-zinc-100 dark:bg-zinc-800'
+                    : ''
+                }`}
+              >
+                {t.meta.title || 'Без названия'}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Overlay для мобильного */}
+      {open && (
+        <div
+          onClick={() => setOpen(false)}
+          className="fixed inset-0 z-30 bg-black/40 md:hidden"
+        />
+      )}
+
+      {/* Main */}
+      <div
+        className="ml-0 flex min-h-[100dvh] w-full flex-col md:ml-[--sb]"
+        style={{ ['--sb' as any]: `${SIDEBAR_WIDTH}px` } as React.CSSProperties}
+      >
+        {/* Header */}
+        <div className="sticky top-0 z-20 flex items-center gap-3 border-b border-zinc-200 bg-white/80 px-3 py-3 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/80 md:px-5">
+          <button
+            className="inline-flex h-9 w-9 items-center justify-center rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 md:hidden"
+            onClick={() => setOpen(true)}
+            aria-label="Открыть меню"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+          <div className="text-sm font-medium">Мой ИИ-ассистент</div>
         </div>
 
-        {/* Лента сообщений */}
-        <div className="flex-1 space-y-3 overflow-y-auto p-4">
-          {active?.messages.map((m) => (
+        {/* Content */}
+        <div className="relative mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 px-3 pb-[112px] pt-6 md:px-5">
+          {(!current || current.messages.length === 0) && (
+            <h1 className="mx-auto mt-8 text-center text-2xl font-semibold text-zinc-900 dark:text-zinc-100">
+              Чем я могу помочь?
+            </h1>
+          )}
+
+          {current?.messages.map((m, i) => (
             <div
-              key={m.id}
-              className={`max-w-[80ch] rounded-lg border px-3 py-2 text-sm leading-6 ${
-                m.role === "user"
-                  ? "ml-auto border-zinc-300 bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800"
-                  : m.role === "assistant"
-                  ? "border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900"
-                  : "border-red-300 bg-red-50 text-red-900 dark:border-red-700/60 dark:bg-red-900/20 dark:text-red-200"
+              key={i}
+              className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm ${
+                m.role === 'user'
+                  ? 'ml-auto bg-zinc-900 text-zinc-50 dark:bg-zinc-100 dark:text-zinc-900'
+                  : 'bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100'
               }`}
             >
               {m.content}
             </div>
           ))}
-          <div ref={endRef} />
         </div>
 
-        {/* Нижняя панель ввода */}
-        <div className="border-t border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
-          <div className="mx-auto flex max-w-4xl items-end gap-2">
-            <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-zinc-300 px-2 py-2 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800">
-              📎
-              <input type="file" onChange={onAttachFile} className="hidden" />
-              <span>Прикрепить</span>
+        {/* Composer (нижняя панель) */}
+        <div className="fixed inset-x-0 bottom-0 z-20 border-t border-zinc-200 bg-white/95 px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-2 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/95">
+          <div className="mx-auto flex w-full max-w-3xl items-end gap-2 md:gap-3">
+            {/* Скрепка вне поля ввода */}
+            <label className="inline-flex">
+              <input type="file" className="hidden" onChange={onAttach} />
+              <div
+                className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+                title="Прикрепить файл"
+              >
+                <Paperclip className="h-5 w-5" />
+              </div>
             </label>
 
-            <button
-              onClick={toggleVoice}
-              className={`rounded-md border px-2 py-2 text-xs transition ${
-                recording
-                  ? "border-red-400 bg-red-50 text-red-700 dark:border-red-600 dark:bg-red-900/20 dark:text-red-200"
-                  : "border-zinc-300 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
-              }`}
-              title="Распознавание речи в браузере"
-            >
-              🎤
-            </button>
+            {/* Поле ввода */}
+            <div className="flex min-h-10 flex-1 items-center rounded-xl border border-zinc-200 bg-white px-3 dark:border-zinc-700 dark:bg-zinc-900">
+              <textarea
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                onKeyDown={onKeyDown}
+                rows={1}
+                placeholder="Спросите что-нибудь…"
+                className="max-h-40 w-full resize-none bg-transparent py-2 outline-none placeholder:text-zinc-400"
+              />
+              {/* Микрофон справа внутри поля */}
+              <button
+                type="button"
+                onClick={toggleRec}
+                className="ml-1 inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+                title={recOn ? 'Остановить запись' : 'Говорить'}
+              >
+                {recOn ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+              </button>
+            </div>
 
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  sendMessage();
-                }
-              }}
-              placeholder="Спросите что-нибудь…"
-              rows={1}
-              className="min-h-[44px] flex-1 resize-none rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm outline-none placeholder:text-zinc-400 focus:ring-2 focus:ring-zinc-300 dark:border-zinc-700 dark:bg-zinc-950 dark:focus:ring-zinc-700"
-            />
-
+            {/* Кнопка «Отправить» стрелкой вверх, чёрный фон */}
             <button
-              onClick={() => sendMessage()}
-              disabled={sending}
-              className="rounded-md bg-zinc-900 px-4 py-2 text-sm text-white disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900"
+              onClick={sendMessage}
+              disabled={sending || (!text.trim() && !file)}
+              className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-zinc-900 text-zinc-50 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+              title="Отправить (Enter)"
             >
-              Отправить
+              <ArrowUp className="h-5 w-5" />
             </button>
           </div>
+
+          {/* Выбранный файл (мини-лейбл) */}
+          {file && (
+            <div className="mx-auto mt-2 w-full max-w-3xl text-xs text-zinc-500 dark:text-zinc-400">
+              Прикреплено: <span className="truncate">{file.name}</span>
+            </div>
+          )}
         </div>
-      </main>
+      </div>
     </div>
   );
 }
