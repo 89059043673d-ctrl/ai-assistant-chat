@@ -1,5 +1,6 @@
 "use client";
 
+import remarkBreaks from "remark-breaks";
 import React from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -18,8 +19,11 @@ export default function Markdown({ children, className }: Props) {
   return (
     <div className={className}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeKatex]}
+<ReactMarkdown
+  remarkPlugins={[remarkGfm, remarkMath, remarkBreaks]}
+  rehypePlugins={[rehypeKatex]}
+  /* остальное без изменений */
+>
         // HTML не рендерим для безопасности
         skipHtml
         // кастомизация некоторых элементов
