@@ -18,6 +18,18 @@ const genId = () => {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 };
 
+// Минимальное описание API распознавания речи (чтобы не тянуть типы извне)
+type SpeechRec = {
+  lang: string;
+  interimResults: boolean;
+  continuous: boolean;
+  start: () => void;
+  stop: () => void;
+  onresult: ((e: any) => void) | null;
+  onend: (() => void) | null;
+  onerror: ((e: any) => void) | null;
+} | null;
+
 export default function Chat() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [chats, setChats] = useState<Chat[]>([]);
@@ -30,7 +42,7 @@ export default function Chat() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
-  const recRef = useRef<SpeechRecognition | null>(null);
+  const recRef = useRef<SpeechRec>(null);
 
   // ------------------ ЗАГРУЗКА / СОХРАНЕНИЕ ------------------
   useEffect(() => {
@@ -107,10 +119,7 @@ export default function Chat() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: [
-            ...currentChat.messages,
-            userMsg,
-          ],
+          messages: [...currentChat.messages, userMsg],
         }),
       });
 
@@ -128,16 +137,15 @@ export default function Chat() {
             content: 'Пустой ответ сервера.',
           });
         } else {
-          // Читаем стрим чанками
           let acc = '';
           while (true) {
             const { value, done } = await reader.read();
             if (done) break;
             acc += new TextDecoder().decode(value);
-            // Потихоньку отображаем
+            // визуальный прогресс (не добавляет новое сообщение)
             pushPartial(currentChat.id, acc);
           }
-          // Финализация
+          // финализация
           pushMessage(currentChat.id, { role: 'assistant', content: acc });
           clearPartial(currentChat.id);
         }
@@ -261,7 +269,7 @@ export default function Chat() {
     );
   }
 
-  function clearPartial(id: string) {
+  function clearPartial(_id: string) {
     // ничего, т.к. pushMessage финализирует
   }
 
@@ -272,17 +280,21 @@ export default function Chat() {
 
   // Микрофон инициализация
   useEffect(() => {
+    // Только на клиенте
+    if (typeof window === 'undefined') return;
+
     const SR: any =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) return;
+
+    if (!SR) return; // браузер не поддерживает
+
     if (recOn && !recRef.current) {
-      const r: SpeechRecognition = new SR();
+      const r = new SR() as NonNullable<SpeechRec>;
       r.lang = 'ru-RU';
       r.interimResults = false;
       r.continuous = false;
-      r.onresult = (e) => {
-        // Берем ТОЛЬКО финальный результат один раз
-        const res = e.results?.[0]?.[0]?.transcript;
+      r.onresult = (e: any) => {
+        const res = e?.results?.[0]?.[0]?.transcript;
         if (res) setInput((t) => (t ? t + ' ' : '') + res);
       };
       r.onend = () => setRecOn(false);
@@ -374,7 +386,6 @@ export default function Chat() {
           >
             <Menu className="w-5 h-5" />
           </button>
-          <div className="font-medium">Ассистент</div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
@@ -409,6 +420,7 @@ export default function Chat() {
               onClick={openFileDialog}
               className="p-2 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800"
               aria-label="Прикрепить файл"
+              title="Прикрепить файл"
             >
               <Paperclip className="w-5 h-5" />
             </button>
@@ -437,6 +449,7 @@ export default function Chat() {
               onClick={sendMessage}
               className="p-2 rounded bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 disabled:opacity-50"
               aria-label="Отправить"
+              title="Отправить"
             >
               <Send className="w-5 h-5" />
             </button>
@@ -458,19 +471,6 @@ export default function Chat() {
   // ---------- ВСПОМОГАТЕЛЬНОЕ ----------
   function emptyChat(): Chat {
     return { id: genId(), title: 'Новый чат', messages: [] };
-  }
-  function newChatId() {
-    return genId();
-  }
-
-  function updateCurrent(updater: (draft: Chat) => Chat) {
-    setChats((arr) => {
-      const idx = arr.findIndex((c) => c.id === currentId);
-      if (idx < 0) return arr;
-      const copy = [...arr];
-      copy[idx] = updater(copy[idx]);
-      return copy;
-    });
   }
 }
 
