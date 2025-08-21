@@ -1,106 +1,59 @@
-"use client";
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+'use client';
 
-export type Msg = { id: string; role: "user" | "assistant"; text: string; imageBase64?: string; imageType?: string; };
-export type Session = { id: string; title: string; createdAt: number; messages: Msg[] };
+import React from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import remarkBreaks from 'remark-breaks';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 
-type Ctx = {
-  sessions: Session[];
-  activeId: string;
-  setActiveId: (id: string) => void;
-  addMessage: (m: Omit<Msg,"id">) => Msg;
-  newChat: () => string;
-  removeChat: (id: string) => void;
-  renameActive: (title: string) => void;
-  theme: "light" | "dark";
-  toggleTheme: () => void;
-  sidebarOpen: boolean;
-  setSidebarOpen: (v: boolean) => void;
-};
+type Props = { children: string; className?: string };
 
-const ChatCtx = createContext<Ctx | null>(null);
-const LS_KEY = "ai-assistant-sessions-v1";
-const THEME_KEY = "theme";
-
-function uid() { return Math.random().toString(36).slice(2, 10); }
-
-export function ChatProvider({ children }: { children: React.ReactNode }) {
-  const [sessions, setSessions] = useState<Session[]>(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      const raw = localStorage.getItem(LS_KEY);
-      if (raw) return JSON.parse(raw);
-    } catch {}
-    // стартовый чат
-    return [{
-      id: uid(),
-      title: "Новый чат",
-      createdAt: Date.now(),
-      messages: [{
-        id: uid(),
-        role: "assistant",
-        text: "Привет! Я твой личный ИИ-помощник по **коксохим-производству**. Задавай вопросы — помогу с расчётами, формулами и технологическими аспектами.",
-      }],
-    }];
-  });
-
-  const [activeId, setActiveId] = useState<string>(() => sessions[0]?.id || uid());
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [theme, setTheme] = useState<"light" | "dark">(() => (typeof document !== "undefined" ? (document.documentElement.dataset.theme as any) || "dark" : "dark"));
-
-  useEffect(() => {
-    try { localStorage.setItem(LS_KEY, JSON.stringify(sessions)); } catch {}
-  }, [sessions]);
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    try { localStorage.setItem(THEME_KEY, theme); } catch {}
-  }, [theme]);
-
-  const addMessage = (m: Omit<Msg,"id">) => {
-    const msg: Msg = { id: uid(), ...m };
-    setSessions(prev => prev.map(s => s.id === activeId ? { ...s, messages: [...s.messages, msg] } : s));
-    // авто-название чата по первой фразе пользователя
-    if (m.role === "user") {
-      setSessions(prev => prev.map(s => s.id === activeId && s.title === "Новый чат"
-        ? { ...s, title: m.text.slice(0, 40).trim() || "Новый чат" }
-        : s
-      ));
-    }
-    return msg;
-  };
-
-  const newChat = () => {
-    const id = uid();
-    const s: Session = { id, title: "Новый чат", createdAt: Date.now(), messages: [] };
-    setSessions(prev => [s, ...prev]);
-    setActiveId(id);
-    return id;
-  };
-
-  const removeChat = (id: string) => {
-    setSessions(prev => prev.filter(s => s.id !== id));
-    if (id === activeId) {
-      setActiveId(prev => sessions.find(s => s.id !== id)?.id || newChat());
-    }
-  };
-
-  const renameActive = (title: string) => {
-    setSessions(prev => prev.map(s => s.id === activeId ? ({ ...s, title }) : s));
-  };
-
-  const value = useMemo<Ctx>(() => ({
-    sessions, activeId, setActiveId,
-    addMessage, newChat, removeChat, renameActive,
-    theme, toggleTheme: () => setTheme(t => t === "dark" ? "light" : "dark"),
-    sidebarOpen, setSidebarOpen
-  }), [sessions, activeId, theme, sidebarOpen]);
-
-  return <ChatCtx.Provider value={value}>{children}</ChatCtx.Provider>;
-}
-
-export function useChat() {
-  const ctx = useContext(ChatCtx);
-  if (!ctx) throw new Error("useChat must be used within ChatProvider");
-  return ctx;
+export default function Markdown({ children, className }: Props) {
+  return (
+    <div className={className}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm as any, remarkMath as any, remarkBreaks as any]}
+        rehypePlugins={[rehypeKatex as any]}
+        components={{
+          p: ({ node, ...props }) => (
+            <p className="leading-7 whitespace-pre-wrap mb-3" {...props} />
+          ),
+          strong: ({ node, ...props }) => <strong className="font-bold" {...props} />,
+          em: ({ node, ...props }) => <em className="italic" {...props} />,
+          h1: ({ node, ...props }) => (
+            <h1 className="text-2xl md:text-3xl font-semibold mt-4 mb-2" {...props} />
+          ),
+          h2: ({ node, ...props }) => (
+            <h2 className="text-xl md:text-2xl font-semibold mt-4 mb-2" {...props} />
+          ),
+          h3: ({ node, ...props }) => (
+            <h3 className="text-lg md:text-xl font-semibold mt-3 mb-1" {...props} />
+          ),
+          ul: ({ node, ...props }) => <ul className="list-disc pl-5 space-y-1" {...props} />,
+          ol: ({ node, ...props }) => <ol className="list-decimal pl-5 space-y-1" {...props} />,
+          blockquote: ({ node, ...props }) => (
+            <blockquote className="border-l-4 pl-3 italic opacity-80" {...props} />
+          ),
+          code({ inline, className, children, ...props }) {
+            if (inline) {
+              return (
+                <code className="px-1 py-0.5 rounded bg-zinc-800/60" {...props}>
+                  {children}
+                </code>
+              );
+            }
+            return (
+              <pre className="rounded-lg p-3 bg-zinc-900/70 overflow-x-auto">
+                <code className={className}>{children}</code>
+              </pre>
+            );
+          },
+        }}
+      >
+        {children}
+      </ReactMarkdown>
+    </div>
+  );
 }
