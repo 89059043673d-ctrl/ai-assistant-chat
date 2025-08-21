@@ -1,56 +1,63 @@
+// app/api/chat/route.ts
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 
-export const runtime = "nodejs";
+export const runtime = "nodejs"; // не Edge, чтобы работал node-fetch и SDK
 
-function systemPrompt() {
-  return (
-    "Ты вежливый и точный ИИ-помощник по коксохим-производству. " +
-    "Отвечай кратко и по делу. Если вопрос вне темы — предупреди и предложи " +
-    "формулировку, чтобы вернуться к тематике коксохимии. "
-  );
-}
+const apiKey = process.env.OPENAI_API_KEY;
+
+const client = new OpenAI({
+  apiKey,
+});
+
+type ChatMsg = { role: "system" | "user" | "assistant"; content: string };
 
 export async function POST(req: Request) {
   try {
-    const { message, imageBase64, imageType } = await req.json();
-
-    if (!process.env.OPENAI_API_KEY) {
+    if (!apiKey) {
+      console.error("[chat] ENV MISSING: OPENAI_API_KEY");
       return NextResponse.json(
-        { error: "На Vercel не задан OPENAI_API_KEY" },
+        { ok: false, error: "OPENAI_API_KEY is missing" },
         { status: 500 }
       );
     }
 
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    const model = process.env.MODEL || "gpt-4o-mini";
+    const body = await req.json().catch(() => ({} as any));
+    const userText: string = body?.message ?? "";
+    const history: ChatMsg[] = Array.isArray(body?.history) ? body.history : [];
 
-    // Самый совместимый вызов (chat.completions)
-    const messages: any[] = [
-      { role: "system", content: systemPrompt() },
-      { role: "user", content: String(message || "") }
+    const messages: ChatMsg[] = [
+      { role: "system", content: "You are a helpful assistant." },
+      ...history,
+      ...(userText ? [{ role: "user", content: userText }] : []),
     ];
 
-    // (Опционально) если картинка есть — кратко упомянем в тексте
-    if (imageBase64 && imageType) {
-      messages.push({
-        role: "user",
-        content: `К сообщению приложено изображение (${imageType}, base64). Дай комментарии по теме.`
-      });
-    }
-
     const resp = await client.chat.completions.create({
-      model,
+      model: "gpt-4o-mini",
       messages,
       temperature: 0.3,
     });
 
-    const text = resp.choices?.[0]?.message?.content?.trim() || "…";
-    return NextResponse.json({ text });
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: e?.message || String(e) },
-      { status: 500 }
-    );
+    const text =
+      resp.choices?.[0]?.message?.content?.trim() ??
+      "(пустой ответ от модели)";
+
+    return NextResponse.json({ ok: true, text });
+  } catch (err: any) {
+    // В логи Vercel попадёт реальная причина
+    console.error("[chat] OpenAI API error:", {
+      status: err?.status,
+      code: err?.code,
+      message: err?.message,
+      data: err?.response?.data,
+    });
+
+    const status = err?.status || 500;
+    const safe =
+      err?.response?.data ??
+      { message: err?.message || "Unknown error from OpenAI" };
+
+    // Возвращаем реальный статус, чтобы в Vercel Logs было 4xx/5xx, а не 200
+    return NextResponse.json({ ok: false, error: safe }, { status });
   }
 }
