@@ -4,24 +4,34 @@ import React from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
-import rehypeKatex from "rehype-katex";
 import remarkBreaks from "remark-breaks";
+import rehypeKatex from "rehype-katex";
+import type { PluggableList } from "unified";
 
 type Props = {
   children: string;
   className?: string;
 };
 
+// Мягко приводим плагины к ожидаемому типу, чтобы не падало на тайпингах
+const rPlugins: PluggableList = [
+  remarkGfm as any,
+  remarkMath as any,
+  remarkBreaks as any,
+];
+
+const hPlugins: PluggableList = [rehypeKatex as any];
+
 export default function Markdown({ children, className }: Props) {
   return (
     <div className={className}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath, remarkBreaks]}
-        rehypePlugins={[rehypeKatex]}
+        remarkPlugins={rPlugins}
+        rehypePlugins={hPlugins}
         // Не даём рендерить сырой HTML из модели
         skipHtml
         components={{
-          // однострочный код `inline`
+          // однострочный `код`
           code: (props: any) => {
             const { inline, children, ...rest } = props;
             if (inline) {
@@ -41,11 +51,13 @@ export default function Markdown({ children, className }: Props) {
               </pre>
             );
           },
+          // **жирный**
           strong: ({ children, ...rest }) => (
             <strong className="font-bold" {...rest}>
               {children}
             </strong>
           ),
+          // горизонтальная линия
           hr: () => <hr className="my-4 border-white/10" />,
         }}
       >
