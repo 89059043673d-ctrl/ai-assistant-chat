@@ -1,63 +1,60 @@
-// app/api/chat/route.ts
-import { NextResponse } from "next/server";
 import OpenAI from "openai";
 
-export const runtime = "nodejs"; // не Edge, чтобы работал node-fetch и SDK
+export const runtime = "nodejs";         // на Vercel используем Node.js
+export const dynamic = "force-dynamic";  // без кэша
 
-const apiKey = process.env.OPENAI_API_KEY;
-
-const client = new OpenAI({
-  apiKey,
-});
-
-type ChatMsg = { role: "system" | "user" | "assistant"; content: string };
+type ChatRole = "system" | "user" | "assistant";
+type ChatMsg = { role: ChatRole; content: string };
 
 export async function POST(req: Request) {
   try {
+    const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
-      console.error("[chat] ENV MISSING: OPENAI_API_KEY");
-      return NextResponse.json(
-        { ok: false, error: "OPENAI_API_KEY is missing" },
-        { status: 500 }
+      return Response.json(
+        { ok: false, error: "Missing OPENAI_API_KEY" },
+        { status: 200 },
       );
     }
 
-    const body = await req.json().catch(() => ({} as any));
-    const userText: string = body?.message ?? "";
-    const history: ChatMsg[] = Array.isArray(body?.history) ? body.history : [];
+    // Парсим тело
+    const body: any = await req.json().catch(() => ({}));
+    const userText = String(body?.text ?? "").trim();
+    const rawHistory = Array.isArray(body?.history) ? body.history : [];
 
+    // Нормализуем историю: оставляем только допустимые роли и строковый контент
+    const history: ChatMsg[] = rawHistory.map((m: any) => {
+      const r = m?.role;
+      const role: ChatRole =
+        r === "system" || r === "user" || r === "assistant" ? r : "user";
+      const content = String(m?.content ?? "");
+      return { role, content };
+    });
+
+    // Собираем сообщения с корректными типами
     const messages: ChatMsg[] = [
       { role: "system", content: "You are a helpful assistant." },
       ...history,
-      ...(userText ? [{ role: "user", content: userText }] : []),
+      ...(userText ? [{ role: "user" as const, content: userText }] : []),
     ];
 
-    const resp = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages,
+    const openai = new OpenAI({ apiKey });
+
+    const resp = await openai.chat.completions.create({
+      model: "gpt-4o-mini",               // можно поменять на твою модель
+      messages: messages.map((m) => ({
+        role: m.role,
+        content: m.content,
+      })),
       temperature: 0.3,
     });
 
-    const text =
-      resp.choices?.[0]?.message?.content?.trim() ??
-      "(пустой ответ от модели)";
-
-    return NextResponse.json({ ok: true, text });
+    const answer = resp.choices?.[0]?.message?.content ?? "";
+    return Response.json({ ok: true, content: answer }, { status: 200 });
   } catch (err: any) {
-    // В логи Vercel попадёт реальная причина
-    console.error("[chat] OpenAI API error:", {
-      status: err?.status,
-      code: err?.code,
-      message: err?.message,
-      data: err?.response?.data,
-    });
-
-    const status = err?.status || 500;
-    const safe =
-      err?.response?.data ??
-      { message: err?.message || "Unknown error from OpenAI" };
-
-    // Возвращаем реальный статус, чтобы в Vercel Logs было 4xx/5xx, а не 200
-    return NextResponse.json({ ok: false, error: safe }, { status });
+    console.error("API /api/chat error:", err);
+    return Response.json(
+      { ok: false, error: err?.message || "Unknown error" },
+      { status: 200 },
+    );
   }
 }
