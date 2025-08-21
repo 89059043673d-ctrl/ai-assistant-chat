@@ -36,7 +36,8 @@ export default function Markdown({ children, className }: Props) {
           blockquote: ({ node, ...props }) => (
             <blockquote className="border-l-4 pl-3 italic opacity-80" {...props} />
           ),
-          code({ inline, className, children, ...props }) {
+          // единственное изменение — добавлен тип ": any" у параметров функции
+          code({ inline, className, children, ...props }: any) {
             if (inline) {
               return (
                 <code className="px-1 py-0.5 rounded bg-zinc-800/60" {...props}>
