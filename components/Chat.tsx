@@ -1,8 +1,9 @@
 "use client";
 
+import Markdown from "./Markdown";
+import { ChevronDown } from "lucide-react";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Menu, Paperclip, Send, Mic, Copy, Check, Trash2 } from "lucide-react";
-import Markdown from "./Markdown";
 import clsx from "clsx";
 
 type Msg = { id: string; role: "user" | "assistant"; content: string; ts: number };
@@ -38,6 +39,36 @@ export default function Chat() {
   const recRef = useRef<any>(null);
   const [recOn, setRecOn] = useState(false);
   const lastFinalRef = useRef<string>("");
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const [showDown, setShowDown] = useState(false);
+
+function scrollToBottom(smooth = true) {
+  const el = listRef.current;
+  if (!el) return;
+  el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+}
+// Когда приходят новые сообщения — если мы «почти» внизу, докручиваем автоматически
+useEffect(() => {
+  const el = listRef.current;
+  if (!el) return;
+  const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 240;
+  if (nearBottom) scrollToBottom(false);
+}, [messages]);
+
+// Показывать/скрывать кнопку «вниз», если пользователь пролистал вверх
+useEffect(() => {
+  const el = listRef.current;
+  if (!el) return;
+
+  const onScroll = () => {
+    const hidden = el.scrollHeight - el.scrollTop - el.clientHeight < 240;
+    setShowDown(!hidden);
+  };
+
+  el.addEventListener("scroll", onScroll, { passive: true });
+  onScroll(); // первичная инициализация состояния
+  return () => el.removeEventListener("scroll", onScroll);
+}, []);
 
   // ---------- init / migration ----------
   useEffect(() => {
