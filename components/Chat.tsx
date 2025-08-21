@@ -1,154 +1,320 @@
-'use client';
+// components/Chat.tsx
+"use client";
 
-import React, { useEffect, useRef, useState } from 'react';
-import { Paperclip, Mic, Send, Menu } from 'lucide-react';
-import clsx from 'clsx';
+import React, { useEffect, useRef, useState } from "react";
+import { Menu, Paperclip, Send, Mic, Clipboard } from "lucide-react";
+import Markdown from "./Markdown";
+import clsx from "clsx";
 
-type Msg = { role: 'user' | 'assistant'; content: string };
+type Msg = { role: "user" | "assistant"; content: string };
 
 export default function Chat() {
+  // левое меню
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // история сообщений
   const [messages, setMessages] = useState<Msg[]>([]);
-  const [input, setInput] = useState('');
-  const [pending, setPending] = useState(false);
-  const listRef = useRef<HTMLDivElement>(null);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  // Автоскролл вниз
+  // локальная "история чатов" в сайдбаре
+  const [threads, setThreads] = useState<
+    { id: string; title: string; msgs: Msg[] }[]
+  >([]);
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const endRef = useRef<HTMLDivElement>(null);
+
+  // автоскролл в конец
   useEffect(() => {
-    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
-  }, [messages, pending]);
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
 
-  async function handleSend(e?: React.FormEvent) {
-    e?.preventDefault();
+  // создать новый чат
+  function newChat() {
+    const id = crypto.randomUUID();
+    const title = "Новый чат";
+    const t = { id, title, msgs: [] as Msg[] };
+    setThreads((s) => [t, ...s]);
+    setActiveThreadId(id);
+    setMessages([]);
+    setSidebarOpen(false);
+    setTimeout(() => inputRef.current?.focus(), 50);
+  }
+
+  // выбрать чат
+  function selectChat(id: string) {
+    const t = threads.find((x) => x.id === id);
+    if (!t) return;
+    setActiveThreadId(id);
+    setMessages(t.msgs);
+    setSidebarOpen(false);
+  }
+
+  // сохранить текущий чат в список
+  function persistThread(nextMsgs: Msg[]) {
+    if (!activeThreadId) return;
+    setThreads((prev) =>
+      prev.map((t) => (t.id === activeThreadId ? { ...t, msgs: nextMsgs, title: titleFromMsgs(nextMsgs) } : t))
+    );
+  }
+
+  function titleFromMsgs(msgs: Msg[]) {
+    const firstUser = msgs.find((m) => m.role === "user")?.content?.slice(0, 30);
+    return firstUser ? firstUser : "Чат";
+  }
+
+  // копирование текста
+  async function copyText(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {}
+  }
+
+  // отправка (стриминг)
+  async function send(e?: React.FormEvent) {
+    if (e) e.preventDefault(); // чтобы не было двойной отправки
     const text = input.trim();
-    if (!text || pending) return;
+    if (!text || loading) return;
 
-    // Добавляем сообщение пользователя
-    const userMsg: Msg = { role: 'user', content: text };
-    setMessages(prev => [...prev, userMsg]);
-    setInput('');
-    setPending(true);
+    // добавляем пользовательское сообщение
+    const me: Msg = { role: "user", content: text };
+    const startMsgs = [...messages, me];
+    setMessages(startMsgs);
+    persistThread(startMsgs);
+    setInput("");
+
+    // создаем заготовку для assistant
+    const ai: Msg = { role: "assistant", content: "" };
+    setMessages((s) => [...s, ai]);
+    setLoading(true);
 
     try {
-      // Готовим историю без каких-либо приветствий/системных фраз
-      const historyToSend = [...messages, userMsg].map(m => ({ role: m.role, content: m.content }));
-
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: text, history: historyToSend }),
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          history: startMsgs,
+          message: text,
+        }),
       });
 
       if (!res.ok || !res.body) {
-        throw new Error('Bad response from server');
+        throw new Error("bad response");
       }
 
-      // Пустой ответ ассистента — будем наполнять по мере стрима
-      let assistant: Msg = { role: 'assistant', content: '' };
-      setMessages(prev => [...prev, assistant]);
-      const assistantIndex = messages.length + 1; // индекс только что добавленного ассистента
-
       const reader = res.body.getReader();
-      const decoder = new TextDecoder();
+      const decoder = new TextDecoder("utf-8");
+      let acc = "";
 
+      // читаем plain text поток
       while (true) {
-        const { value, done } = await reader.read();
+        const { done, value } = await reader.read();
         if (done) break;
         const chunk = decoder.decode(value, { stream: true });
+        acc += chunk;
 
-        setMessages(prev => {
-          const next = [...prev];
-          const current = next[assistantIndex];
-          if (current && current.role === 'assistant') {
-            next[assistantIndex] = { ...current, content: current.content + chunk };
-          }
+        // обновляем последнее сообщение ассистента
+        setMessages((s) => {
+          const next = [...s];
+          next[next.length - 1] = { role: "assistant", content: sanitizeLeak(acc) };
           return next;
         });
       }
+
+      setMessages((s) => {
+        const next = [...s];
+        next[next.length - 1] = { role: "assistant", content: sanitizeLeak(acc) };
+        persistThread(next);
+        return next;
+      });
     } catch {
-      setMessages(prev => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: 'Не удалось получить ответ от модели. Проверьте Billing и переменную OPENAI_API_KEY на Vercel.',
-        },
-      ]);
+      setMessages((s) => {
+        const next = [...s];
+        next[next.length - 1] = {
+          role: "assistant",
+          content:
+            "Не удалось получить ответ от модели. Проверьте Billing и переменную OPENAI_API_KEY на Vercel.",
+        };
+        persistThread(next);
+        return next;
+      });
     } finally {
-      setPending(false);
+      setLoading(false);
+      inputRef.current?.focus();
     }
   }
 
+  // на случай если вдруг бэкенд где-то вернул `{"ok":true,"content":"..."}`
+  function sanitizeLeak(text: string) {
+    // если это JSON-строка вида { ok:true, content:"..." }
+    const trimmed = text.trim();
+    if (trimmed.startsWith("{") && trimmed.includes('"content"')) {
+      try {
+        const obj = JSON.parse(trimmed);
+        if (obj && typeof obj.content === "string") return obj.content;
+      } catch {}
+    }
+    return text;
+  }
+
+  // при первом заходе — пустой чат
+  useEffect(() => {
+    if (threads.length === 0) newChat();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
-    <div className="flex h-screen w-full bg-neutral-50 text-neutral-900">
-      {/* Кнопка выезда меню (само меню у вас уже есть) */}
-      <button className="p-3" aria-label="menu">
-        <Menu />
-      </button>
-
-      <div className="mx-auto flex max-w-3xl flex-1 flex-col gap-2 px-3">
-        {/* Заголовок */}
-        <div className="py-3 text-center text-sm font-semibold">Мой ИИ-ассистент</div>
-
-        {/* Приветствие — показываем только когда нет истории */}
-        {messages.length === 0 && (
-          <div className="pb-1 text-center text-sm text-neutral-500">Чем я могу помочь?</div>
-        )}
-
-        {/* Лента сообщений */}
-        <div
-          ref={listRef}
-          className="flex-1 overflow-y-auto rounded-lg bg-white p-3 shadow-sm"
+    <div className="relative h-full w-full">
+      {/* верхняя плашка */}
+      <div className="sticky top-0 z-20 flex items-center gap-3 border-b border-zinc-800/60 bg-[#0f0f10]/80 px-4 py-3 backdrop-blur">
+        <button
+          className="rounded-lg bg-zinc-900 p-2 hover:bg-zinc-800"
+          onClick={() => setSidebarOpen((v) => !v)}
+          aria-label="Меню"
+          title="Меню"
         >
-          {messages.map((m, i) => (
-            <div key={i} className={clsx('mb-2 flex', m.role === 'user' ? 'justify-start' : 'justify-start')}>
-              <div
+          <Menu size={18} />
+        </button>
+        <div className="text-sm font-semibold">Мой ИИ-ассистент</div>
+      </div>
+
+      {/* сайдбар */}
+      {sidebarOpen && (
+        <div className="absolute left-0 top-[52px] z-30 h-[calc(100%-52px)] w-[300px] border-r border-zinc-800/60 bg-[#0e0e0f]">
+          <div className="flex items-center gap-2 p-3">
+            <input
+              className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm outline-none"
+              placeholder="Поиск по чатам…"
+              onChange={(e) => {
+                const q = e.target.value.toLowerCase();
+                setThreads((prev) =>
+                  prev
+                    .slice()
+                    .sort((a, b) => a.title.localeCompare(b.title))
+                    .map((t) => t) // просто чтобы перерендерить
+                );
+              }}
+            />
+            <button
+              className="rounded-md bg-zinc-800 px-3 py-2 text-sm hover:bg-zinc-700"
+              onClick={newChat}
+            >
+              + Новый
+            </button>
+          </div>
+          <div className="space-y-1 overflow-y-auto p-2">
+            {threads.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => selectChat(t.id)}
                 className={clsx(
-                  'max-w-[85%] rounded-xl px-4 py-2',
-                  m.role === 'user' ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-900'
+                  "block w-full truncate rounded-md px-3 py-2 text-left text-sm hover:bg-zinc-800",
+                  t.id === activeThreadId && "bg-zinc-800"
                 )}
               >
-                {m.content || (m.role === 'assistant' && pending ? '…' : '')}
+                {t.title}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* область сообщений */}
+      <div className="mx-auto max-w-3xl px-4 pb-32 pt-4">
+        {/* приветственная надпись (как полупрозрачная подсказка) — показываем, когда нет сообщений */}
+        {messages.length === 0 && (
+          <div className="mb-6 rounded-2xl bg-zinc-900/40 p-4 text-center text-sm text-zinc-300">
+            Чем я могу помочь сегодня?
+          </div>
+        )}
+
+        <div className="space-y-3">
+          {messages.map((m, i) => (
+            <div
+              key={i}
+              className={clsx(
+                "flex",
+                m.role === "user" ? "justify-start" : "justify-start"
+              )}
+            >
+              <div
+                className={clsx(
+                  "group relative max-w-[85%] rounded-2xl px-4 py-3",
+                  m.role === "user"
+                    ? "bg-zinc-900 text-zinc-100"
+                    : "bg-zinc-800/70 text-zinc-100"
+                )}
+              >
+                {m.role === "assistant" ? (
+                  <Markdown>{m.content}</Markdown>
+                ) : (
+                  <div className="whitespace-pre-wrap">{m.content}</div>
+                )}
+
+                {/* копировать */}
+                <button
+                  onClick={() => copyText(m.content)}
+                  className="absolute -right-2 -top-2 hidden rounded-full bg-zinc-900 p-2 text-zinc-300 shadow group-hover:block"
+                  title="Копировать"
+                  aria-label="Копировать"
+                >
+                  <Clipboard size={14} />
+                </button>
               </div>
             </div>
           ))}
-          {pending && (
-            <div className="text-neutral-400 text-sm px-2">Модель печатает…</div>
+          {loading && (
+            <div className="text-xs text-zinc-400">Ассистент печатает…</div>
           )}
+          <div ref={endRef} />
         </div>
+      </div>
 
-        {/* Поле ввода */}
-        <form onSubmit={handleSend} className="flex items-center gap-2 py-3">
+      {/* нижняя панель ввода */}
+      <form
+        onSubmit={send}
+        className="fixed inset-x-0 bottom-0 z-20 border-t border-zinc-800/60 bg-[#0f0f10]/90 px-4 py-3"
+      >
+        <div className="mx-auto flex max-w-3xl items-center gap-2">
+          {/* скрепка — слева, темная */}
           <button
             type="button"
-            className="rounded-full bg-white p-2 shadow-sm"
-            aria-label="attach"
+            className="rounded-xl bg-zinc-900 p-3 text-zinc-300 hover:bg-zinc-800"
             title="Прикрепить"
+            aria-label="Прикрепить"
           >
             <Paperclip size={18} />
           </button>
 
-          <div className="relative flex-1">
-            <input
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              placeholder="Спросите что-нибудь…"
-              className="w-full rounded-full border border-neutral-200 bg-white px-4 py-3 pr-20 shadow-sm outline-none"
-            />
-            <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-2">
-              <button type="button" className="rounded-full p-2 text-neutral-500" title="Голос">
-                <Mic size={18} />
-              </button>
-              <button
-                type="submit"
-                className="rounded-full bg-neutral-900 p-2 text-white disabled:opacity-50"
-                disabled={pending || !input.trim()}
-                title="Отправить"
-              >
-                <Send size={18} />
-              </button>
-            </div>
-          </div>
-        </form>
-      </div>
+          <input
+            ref={inputRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Спросите что-нибудь…"
+            className="flex-1 rounded-2xl border border-zinc-700 bg-zinc-900/70 px-4 py-3 text-sm outline-none placeholder:text-zinc-500"
+          />
+
+          <button
+            type="button"
+            className="rounded-xl bg-zinc-900 p-3 text-zinc-300 hover:bg-zinc-800"
+            title="Голос"
+            aria-label="Голос"
+          >
+            <Mic size={18} />
+          </button>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="rounded-xl bg-black p-3 text-zinc-100 hover:bg-zinc-900 disabled:opacity-50"
+            title="Отправить"
+            aria-label="Отправить"
+          >
+            <Send size={18} />
+          </button>
+        </div>
+      </form>
     </div>
   );
 }
