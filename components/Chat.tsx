@@ -411,13 +411,26 @@ export default function Chat() {
               onChange={onFilesChosen}
             />
 
-            <input
-              className="flex-1 rounded-2xl bg-zinc-800 px-4 py-3 text-base text-white placeholder:text-white/60 outline-none ring-1 ring-white/10 focus:ring-2 focus:ring-emerald-400/70"
-              placeholder="Спросите что-нибудь…"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={onEnterSend}
-            />
+           <textarea
+  className="flex-1 rounded-2xl bg-zinc-800 px-4 py-3 text-base text-white placeholder:text-white/60 outline-none ring-1 ring-white/10 focus:ring-2 focus:ring-emerald-400/70 resize-none max-h-40 overflow-y-auto"
+  placeholder="Спросите что-нибудь…"
+  value={text}
+  onChange={(e) => setText(e.target.value)}
+  rows={1}
+  onKeyDown={(e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      send();
+    }
+    // авто-подгон высоты
+    const el = e.currentTarget as HTMLTextAreaElement;
+    requestAnimationFrame(() => {
+      el.style.height = "auto";
+      el.style.height = Math.min(el.scrollHeight, 160) + "px";
+    });
+  }}
+/>
+
 
             <button
               className={clsx(
