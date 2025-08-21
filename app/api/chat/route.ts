@@ -1,60 +1,59 @@
+// app/api/chat/route.ts
 import OpenAI from "openai";
 
-export const runtime = "nodejs";         // на Vercel используем Node.js
-export const dynamic = "force-dynamic";  // без кэша
+export const runtime = "nodejs";
 
-type ChatRole = "system" | "user" | "assistant";
-type ChatMsg = { role: ChatRole; content: string };
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+type ChatMsg = { role: "system" | "user" | "assistant"; content: string };
 
 export async function POST(req: Request) {
   try {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      return Response.json(
-        { ok: false, error: "Missing OPENAI_API_KEY" },
-        { status: 200 },
-      );
-    }
+    const { history = [], message } = await req.json();
 
-    // Парсим тело
-    const body: any = await req.json().catch(() => ({}));
-    const userText = String(body?.text ?? "").trim();
-    const rawHistory = Array.isArray(body?.history) ? body.history : [];
-
-    // Нормализуем историю: оставляем только допустимые роли и строковый контент
-    const history: ChatMsg[] = rawHistory.map((m: any) => {
-      const r = m?.role;
-      const role: ChatRole =
-        r === "system" || r === "user" || r === "assistant" ? r : "user";
-      const content = String(m?.content ?? "");
-      return { role, content };
-    });
-
-    // Собираем сообщения с корректными типами
-    const messages: ChatMsg[] = [
-      { role: "system", content: "You are a helpful assistant." },
-      ...history,
-      ...(userText ? [{ role: "user" as const, content: userText }] : []),
+    const msgs: ChatMsg[] = [
+      {
+        role: "system",
+        content:
+          "Ты дружелюбный ассистент. Отвечай по-русски. Разрешено использовать Markdown. Формулы выводи в формате LaTeX и обрамляй $$ ... $$.",
+      },
+      ...(Array.isArray(history) ? history : []),
+      ...(message ? [{ role: "user", content: String(message) }] : []),
     ];
 
-    const openai = new OpenAI({ apiKey });
-
-    const resp = await openai.chat.completions.create({
-      model: "gpt-4o-mini",               // можно поменять на твою модель
-      messages: messages.map((m) => ({
-        role: m.role,
-        content: m.content,
-      })),
-      temperature: 0.3,
+    const completion = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: msgs,
+      stream: true,
     });
 
-    const answer = resp.choices?.[0]?.message?.content ?? "";
-    return Response.json({ ok: true, content: answer }, { status: 200 });
+    const encoder = new TextEncoder();
+
+    const stream = new ReadableStream({
+      async start(controller) {
+        try {
+          for await (const part of completion) {
+            const delta = part.choices?.[0]?.delta?.content ?? "";
+            if (delta) controller.enqueue(encoder.encode(delta));
+          }
+        } catch (e) {
+          controller.error(e);
+        } finally {
+          controller.close();
+        }
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        // чтобы браузер не пытался кэшировать
+        "Cache-Control": "no-store",
+      },
+    });
   } catch (err: any) {
-    console.error("API /api/chat error:", err);
-    return Response.json(
-      { ok: false, error: err?.message || "Unknown error" },
-      { status: 200 },
-    );
+    return new Response("Ошибка запроса к модели.", { status: 500 });
   }
 }
