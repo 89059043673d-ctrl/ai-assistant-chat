@@ -3,7 +3,7 @@
 import Markdown from "./Markdown";
 import { ChevronDown } from "lucide-react";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Menu, Paperclip, Send, Mic, Copy, Check, Trash2 } from "lucide-react";
+import { Menu, Paperclip, Send, Mic, Trash2 } from "lucide-react";
 import clsx from "clsx";
 
 type Msg = { id: string; role: "user" | "assistant"; content: string; ts: number };
@@ -28,7 +28,6 @@ export default function Chat() {
   // ---------- input state ----------
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // attachments
@@ -106,22 +105,19 @@ export default function Chat() {
   const messages = current?.messages ?? [];
 
   // ---------- autoscroll effects ----------
-  // Когда приходят новые сообщения — если мы «почти» внизу, докручиваем автоматически
+  // Всегда докручивать вниз, когда меняются сообщения
   useEffect(() => {
-    const el = listRef.current;
-    if (!el) return;
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 240;
-    if (nearBottom) scrollToBottom(false);
+    scrollToBottom(false);
   }, [messages]);
 
-  // Показывать/скрывать кнопку «вниз», если пользователь пролистал вверх
+  // Показывать/прятать кнопку «вниз» по прокрутке
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
 
     const onScroll = () => {
-      const hidden = el.scrollHeight - el.scrollTop - el.clientHeight < 240;
-      setShowDown(!hidden);
+      const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 240;
+      setShowDown(!nearBottom);
     };
 
     el.addEventListener("scroll", onScroll, { passive: true });
@@ -139,14 +135,6 @@ export default function Chat() {
   };
 
   // ---------- helpers ----------
-  const copyText = async (id: string, content: string) => {
-    try {
-      await navigator.clipboard.writeText(content);
-      setCopiedId(id);
-      setTimeout(() => setCopiedId(null), 900);
-    } catch {}
-  };
-
   const onPickFile = () => fileInputRef.current?.click();
   const onFilesChosen = (e: React.ChangeEvent<HTMLInputElement>) => {
     const names = Array.from(e.target.files ?? []).map((f) => f.name);
@@ -322,13 +310,6 @@ export default function Chat() {
     }
   };
 
-  const onEnterSend = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      send();
-    }
-  };
-
   const filteredSessions = useMemo(() => {
     const qv = q.trim().toLowerCase();
     if (!qv) return sessions;
@@ -368,23 +349,17 @@ export default function Chat() {
       {/* messages */}
       <div
         ref={listRef}
-        className="flex-1 overflow-y-auto px-4 py-3"
+        className="flex-1 overflow-y-auto px-3 sm:px-4 py-3 pb-36"
       >
         {messages.map((m) => (
-          <div
-            key={m.id}
-            className={
-              m.role === "assistant"
-                ? "mb-3 flex w-full justify-start"
-                : "mb-3 flex w-full justify-end"
-            }
-          >
+          <div key={m.id} className="mb-3">
             <div
-              className={
+              className={[
+                "mx-auto w-full max-w-3xl rounded-2xl p-3 ring-1",
                 m.role === "assistant"
-                  ? "max-w-[85%] rounded-2xl bg-zinc-800/80 p-3 text-zinc-100 ring-1 ring-white/10"
-                  : "max-w-[85%] rounded-2xl bg-emerald-600/80 p-3 text-white ring-1 ring-white/10"
-              }
+                  ? "bg-zinc-800/80 text-zinc-100 ring-white/10"
+                  : "bg-emerald-600/85 text-white ring-white/10",
+              ].join(" ")}
             >
               <Markdown className="text-[15px] leading-relaxed">
                 {m.content}
