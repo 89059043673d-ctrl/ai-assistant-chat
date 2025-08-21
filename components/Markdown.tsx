@@ -16,10 +16,8 @@ export default function Markdown({ children, className = "" }: Props) {
   return (
     <div className={`prose prose-invert max-w-none ${className}`}>
       <ReactMarkdown
-        // Поддержка списков/таблиц/чекбоксов и математики
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex]}
-        // Базовые маппинги, чтобы заголовки, жирный и т.д. смотрелись как надо
         components={{
           h1: ({ node, ...props }) => (
             <h1 className="text-2xl font-bold mt-2 mb-3" {...props} />
@@ -40,19 +38,22 @@ export default function Markdown({ children, className = "" }: Props) {
           strong: ({ node, ...props }) => (
             <strong className="font-bold" {...props} />
           ),
-          code: ({ node, inline, className, children, ...props }) => {
-            // однострочный код
-            if (inline) {
+          // В v9 нет props.inline — определяем сами по наличию перевода строки
+          code: (props: any) => {
+            const { children } = props;
+            const text =
+              Array.isArray(children)
+                ? children.map((c) => String(c)).join("")
+                : String(children ?? "");
+            const isInline = !text.includes("\n");
+
+            if (isInline) {
               return (
-                <code
-                  className="rounded bg-zinc-800/70 px-1 py-0.5 text-[0.95em]"
-                  {...props}
-                >
+                <code className="rounded bg-zinc-800/70 px-1 py-0.5 text-[0.95em]">
                   {children}
                 </code>
               );
             }
-            // Блочные — просто моноширинный блок
             return (
               <pre className="rounded bg-zinc-900/70 p-3 overflow-x-auto">
                 <code>{children}</code>
