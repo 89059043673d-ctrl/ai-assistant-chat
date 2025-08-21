@@ -1,59 +1,72 @@
-// app/api/chat/route.ts
+import { NextRequest } from "next/server";
 import OpenAI from "openai";
-
-export const runtime = "nodejs";
-
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
 
 type ChatMsg = { role: "system" | "user" | "assistant"; content: string };
 
-export async function POST(req: Request) {
-  try {
-    const { history = [], message } = await req.json();
+export const runtime = "edge";
 
-    const msgs: ChatMsg[] = [
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const history = (body?.history ?? []) as { role: string; content: string }[];
+    const userText = (body?.text ?? "") as string;
+
+    const messages: ChatMsg[] = [
       {
         role: "system",
         content:
-          "Ты дружелюбный ассистент. Отвечай по-русски. Разрешено использовать Markdown. Формулы выводи в формате LaTeX и обрамляй $$ ... $$.",
+          "Ты полезный ассистент. Отвечай кратко и по делу, без приветствий и без лишних вводных. " +
+          "Сохраняй разметку Markdown (жирный, заголовки, списки) и формулы LaTeX. " +
+          "По умолчанию отвечай на русском, но если пользователь пишет не по-русски — отвечай на его языке.",
       },
-      ...(Array.isArray(history) ? history : []),
-      ...(message ? [{ role: "user", content: String(message) }] : []),
+      ...history
+        .filter((m) => m && typeof m.role === "string" && typeof m.content === "string")
+        .map((m) => ({
+          role: (m.role === "user" || m.role === "assistant" ? m.role : "user") as
+            | "user"
+            | "assistant",
+          content: m.content,
+        })),
+      ...(userText ? [{ role: "user" as const, content: userText }] : []),
     ];
 
-    const completion = await client.chat.completions.create({
+    const client = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+
+    const resp = await client.chat.completions.create({
       model: "gpt-4o-mini",
-      messages: msgs,
+      messages,
+      temperature: 0.2,
       stream: true,
     });
 
-    const encoder = new TextEncoder();
-
     const stream = new ReadableStream({
-      async start(controller) {
-        try {
-          for await (const part of completion) {
-            const delta = part.choices?.[0]?.delta?.content ?? "";
-            if (delta) controller.enqueue(encoder.encode(delta));
+      start(controller) {
+        (async () => {
+          try {
+            for await (const chunk of resp) {
+              const delta = chunk.choices?.[0]?.delta?.content ?? "";
+              if (delta) controller.enqueue(new TextEncoder().encode(delta));
+            }
+            controller.close();
+          } catch (e) {
+            controller.error(e);
           }
-        } catch (e) {
-          controller.error(e);
-        } finally {
-          controller.close();
-        }
+        })();
       },
     });
 
     return new Response(stream, {
       headers: {
         "Content-Type": "text/plain; charset=utf-8",
-        // чтобы браузер не пытался кэшировать
-        "Cache-Control": "no-store",
+        "Cache-Control": "no-cache",
       },
     });
-  } catch (err: any) {
-    return new Response("Ошибка запроса к модели.", { status: 500 });
+  } catch (e) {
+    return new Response(
+      "Не удалось получить ответ от модели. Проверьте Billing и переменную OPENAI_API_KEY на Vercel.",
+      { status: 500 }
+    );
   }
 }
