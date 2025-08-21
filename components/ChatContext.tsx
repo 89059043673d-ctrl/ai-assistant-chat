@@ -1,60 +1,134 @@
 'use client';
 
-import React from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
-import remarkBreaks from 'remark-breaks';
-import rehypeKatex from 'rehype-katex';
-import 'katex/dist/katex.min.css';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 
-type Props = { children: string; className?: string };
+type Role = 'user' | 'assistant';
+export type Message = { role: Role; content: string };
 
-export default function Markdown({ children, className }: Props) {
-  return (
-    <div className={className}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm as any, remarkMath as any, remarkBreaks as any]}
-        rehypePlugins={[rehypeKatex as any]}
-        components={{
-          p: ({ node, ...props }) => (
-            <p className="leading-7 whitespace-pre-wrap mb-3" {...props} />
-          ),
-          strong: ({ node, ...props }) => <strong className="font-bold" {...props} />,
-          em: ({ node, ...props }) => <em className="italic" {...props} />,
-          h1: ({ node, ...props }) => (
-            <h1 className="text-2xl md:text-3xl font-semibold mt-4 mb-2" {...props} />
-          ),
-          h2: ({ node, ...props }) => (
-            <h2 className="text-xl md:text-2xl font-semibold mt-4 mb-2" {...props} />
-          ),
-          h3: ({ node, ...props }) => (
-            <h3 className="text-lg md:text-xl font-semibold mt-3 mb-1" {...props} />
-          ),
-          ul: ({ node, ...props }) => <ul className="list-disc pl-5 space-y-1" {...props} />,
-          ol: ({ node, ...props }) => <ol className="list-decimal pl-5 space-y-1" {...props} />,
-          blockquote: ({ node, ...props }) => (
-            <blockquote className="border-l-4 pl-3 italic opacity-80" {...props} />
-          ),
-          // единственное изменение — добавлен тип ": any" у параметров функции
-          code({ inline, className, children, ...props }: any) {
-            if (inline) {
-              return (
-                <code className="px-1 py-0.5 rounded bg-zinc-800/60" {...props}>
-                  {children}
-                </code>
-              );
-            }
-            return (
-              <pre className="rounded-lg p-3 bg-zinc-900/70 overflow-x-auto">
-                <code className={className}>{children}</code>
-              </pre>
-            );
-          },
-        }}
-      >
-        {children}
-      </ReactMarkdown>
-    </div>
-  );
+export type Session = {
+  id: string;
+  title: string;
+  messages: Message[];
+  createdAt: number;
+  updatedAt: number;
+};
+
+type Theme = 'light' | 'dark';
+
+type ChatContextValue = {
+  sessions: Session[];
+  activeId: string | null;
+  setActiveId: (id: string) => void;
+  newChat: () => void;
+  removeChat: (id: string) => void;
+  theme: Theme;
+  toggleTheme: () => void;
+  sidebarOpen: boolean;
+  setSidebarOpen: (v: boolean) => void;
+};
+
+const ChatContext = createContext<ChatContextValue | null>(null);
+
+const STORAGE_KEY = 'chats_v1';
+
+const genId = () => {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+};
+
+function makeEmptySession(): Session {
+  const now = Date.now();
+  return {
+    id: genId(),
+    title: 'Новый чат',
+    messages: [],
+    createdAt: now,
+    updatedAt: now,
+  };
 }
+
+export function ChatProvider({ children }: { children: React.ReactNode }) {
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [theme, setTheme] = useState<Theme>('light');
+
+  // Инициализация из localStorage
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Session[];
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setSessions(parsed);
+          setActiveId(parsed[0].id);
+          return;
+        }
+      }
+    } catch {}
+    const first = makeEmptySession();
+    setSessions([first]);
+    setActiveId(first.id);
+  }, []);
+
+  // Сохранение в localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
+    } catch {}
+  }, [sessions]);
+
+  // Применение темы на html
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const root = document.documentElement;
+    if (theme === 'dark') {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
+  }, [theme]);
+
+  const value: ChatContextValue = useMemo(
+    () => ({
+      sessions,
+      activeId,
+      setActiveId: (id: string) => setActiveId(id),
+      newChat: () => {
+        const s = makeEmptySession();
+        setSessions((arr) => [s, ...arr]);
+        setActiveId(s.id);
+      },
+      removeChat: (id: string) => {
+        setSessions((arr) => arr.filter((s) => s.id !== id));
+        if (activeId === id) {
+          // переключиться на следующий доступный
+          setActiveId((prev) => {
+            const rest = sessions.filter((s) => s.id !== id);
+            return rest[0]?.id ?? null;
+          });
+        }
+      },
+      theme,
+      toggleTheme: () => setTheme((t) => (t === 'light' ? 'dark' : 'light')),
+      sidebarOpen,
+      setSidebarOpen,
+    }),
+    [sessions, activeId, theme, sidebarOpen]
+  );
+
+  return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
+}
+
+export function useChat(): ChatContextValue {
+  const ctx = useContext(ChatContext);
+  if (!ctx) {
+    throw new Error('useChat must be used within <ChatProvider>');
+  }
+  return ctx;
+}
+
+// Экспорт по умолчанию — провайдер (может использоваться в layout)
+export default ChatProvider;
