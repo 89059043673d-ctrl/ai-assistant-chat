@@ -44,3 +44,16 @@ textarea {
 .prose ul, .prose ol { margin: 0.4rem 0; }
 .prose strong { font-weight: 700; }
 .katex { font-size: 1.02em; }
+/* Читать текст в инпутах/поиске на тёмной теме */
+input[type="text"],
+input[type="search"],
+textarea {
+  color: #fff;
+  caret-color: #fff;
+}
+
+input::placeholder,
+input[type="search"]::placeholder,
+textarea::placeholder {
+  color: rgba(255, 255, 255, 0.6);
+}
