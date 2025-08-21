@@ -39,36 +39,16 @@ export default function Chat() {
   const recRef = useRef<any>(null);
   const [recOn, setRecOn] = useState(false);
   const lastFinalRef = useRef<string>("");
+
+  // ---------- refs/state for autoscroll ----------
   const listRef = useRef<HTMLDivElement | null>(null);
   const [showDown, setShowDown] = useState(false);
 
-function scrollToBottom(smooth = true) {
-  const el = listRef.current;
-  if (!el) return;
-  el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
-}
-// Когда приходят новые сообщения — если мы «почти» внизу, докручиваем автоматически
-useEffect(() => {
-  const el = listRef.current;
-  if (!el) return;
-  const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 240;
-  if (nearBottom) scrollToBottom(false);
-}, [messages]);
-
-// Показывать/скрывать кнопку «вниз», если пользователь пролистал вверх
-useEffect(() => {
-  const el = listRef.current;
-  if (!el) return;
-
-  const onScroll = () => {
-    const hidden = el.scrollHeight - el.scrollTop - el.clientHeight < 240;
-    setShowDown(!hidden);
-  };
-
-  el.addEventListener("scroll", onScroll, { passive: true });
-  onScroll(); // первичная инициализация состояния
-  return () => el.removeEventListener("scroll", onScroll);
-}, []);
+  function scrollToBottom(smooth = true) {
+    const el = listRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+  }
 
   // ---------- init / migration ----------
   useEffect(() => {
@@ -121,6 +101,33 @@ useEffect(() => {
     () => sessions.find((s) => s.id === currentId) || null,
     [sessions, currentId]
   );
+
+  // удобный алиас для массива сообщений
+  const messages = current?.messages ?? [];
+
+  // ---------- autoscroll effects ----------
+  // Когда приходят новые сообщения — если мы «почти» внизу, докручиваем автоматически
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 240;
+    if (nearBottom) scrollToBottom(false);
+  }, [messages]);
+
+  // Показывать/скрывать кнопку «вниз», если пользователь пролистал вверх
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+
+    const onScroll = () => {
+      const hidden = el.scrollHeight - el.scrollTop - el.clientHeight < 240;
+      setShowDown(!hidden);
+    };
+
+    el.addEventListener("scroll", onScroll, { passive: true });
+    onScroll(); // первичная инициализация
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
 
   const setCurrentMessages = (fn: (prev: Msg[]) => Msg[]) => {
     if (!current) return;
@@ -333,7 +340,7 @@ useEffect(() => {
 
   // ---------- UI ----------
   return (
-    <div className="min-h-screen bg-zinc-900 text-zinc-100">
+    <div className="min-h-screen bg-zinc-900 text-zinc-100 flex flex-col">
       {/* top */}
       <div className="sticky top-0 z-30 flex items-center gap-3 border-b border-white/10 bg-zinc-900/90 px-3 py-2 backdrop-blur">
         <button
@@ -359,53 +366,44 @@ useEffect(() => {
       )}
 
       {/* messages */}
-      <div className="mx-auto max-w-3xl px-3 pb-36 sm:px-4">
-        {current?.messages.map((m) => (
+      <div
+        ref={listRef}
+        className="flex-1 overflow-y-auto px-4 py-3"
+      >
+        {messages.map((m) => (
           <div
             key={m.id}
-            className={clsx(
-              "mt-3 flex",
-              m.role === "user" ? "justify-end" : "justify-start"
-            )}
+            className={
+              m.role === "assistant"
+                ? "mb-3 flex w-full justify-start"
+                : "mb-3 flex w-full justify-end"
+            }
           >
             <div
-              className={clsx(
-                "group relative rounded-2xl px-4 py-3 shadow max-w-[90%]",
-                m.role === "user"
-                  ? "bg-zinc-100 text-zinc-900"
-                  : "bg-zinc-800/90 text-zinc-100"
-              )}
+              className={
+                m.role === "assistant"
+                  ? "max-w-[85%] rounded-2xl bg-zinc-800/80 p-3 text-zinc-100 ring-1 ring-white/10"
+                  : "max-w-[85%] rounded-2xl bg-emerald-600/80 p-3 text-white ring-1 ring-white/10"
+              }
             >
-              {/* copy */}
-              <button
-                className={clsx(
-                  "absolute -right-2 -top-2 hidden rounded-full p-2 text-white/90 shadow transition group-hover:block active:scale-95",
-                  "bg-zinc-700"
-                )}
-                onClick={() => copyText(m.id, m.content)}
-                aria-label="Копировать"
-                title="Копировать"
-              >
-                {copiedId === m.id ? (
-                  <Check className="h-4 w-4" />
-                ) : (
-                  <Copy className="h-4 w-4" />
-                )}
-              </button>
-
-              {/* Markdown — и для ассистента, и для пользователя */}
-              <Markdown
-                className={clsx(
-                  "prose max-w-none prose-headings:mt-3 prose-p:my-2 prose-li:my-1",
-                  m.role === "user" ? "prose-zinc" : "prose-invert"
-                )}
-              >
+              <Markdown className="text-[15px] leading-relaxed">
                 {m.content}
               </Markdown>
             </div>
           </div>
         ))}
       </div>
+
+      {showDown && (
+        <button
+          onClick={() => scrollToBottom(true)}
+          className="fixed bottom-28 right-4 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-zinc-800 text-white ring-1 ring-white/10 hover:bg-zinc-700"
+          aria-label="Прокрутить вниз"
+          title="Прокрутить вниз"
+        >
+          <ChevronDown className="h-5 w-5" />
+        </button>
+      )}
 
       {/* input bar */}
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-white/10 bg-zinc-900/95 backdrop-blur">
@@ -442,26 +440,25 @@ useEffect(() => {
               onChange={onFilesChosen}
             />
 
-           <textarea
-  className="flex-1 rounded-2xl bg-zinc-800 px-4 py-3 text-base text-white placeholder:text-white/60 outline-none ring-1 ring-white/10 focus:ring-2 focus:ring-emerald-400/70 resize-none max-h-40 overflow-y-auto"
-  placeholder="Спросите что-нибудь…"
-  value={text}
-  onChange={(e) => setText(e.target.value)}
-  rows={1}
-  onKeyDown={(e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      send();
-    }
-    // авто-подгон высоты
-    const el = e.currentTarget as HTMLTextAreaElement;
-    requestAnimationFrame(() => {
-      el.style.height = "auto";
-      el.style.height = Math.min(el.scrollHeight, 160) + "px";
-    });
-  }}
-/>
-
+            <textarea
+              className="flex-1 rounded-2xl bg-zinc-800 px-4 py-3 text-base text-white placeholder:text-white/60 outline-none ring-1 ring-white/10 focus:ring-2 focus:ring-emerald-400/70 resize-none max-h-40 overflow-y-auto"
+              placeholder="Спросите что-нибудь…"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              rows={1}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  send();
+                }
+                // авто-подгон высоты
+                const el = e.currentTarget as HTMLTextAreaElement;
+                requestAnimationFrame(() => {
+                  el.style.height = "auto";
+                  el.style.height = Math.min(el.scrollHeight, 160) + "px";
+                });
+              }}
+            />
 
             <button
               className={clsx(
