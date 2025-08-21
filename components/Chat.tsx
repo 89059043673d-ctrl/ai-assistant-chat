@@ -335,14 +335,11 @@ export default function Chat() {
       </div>
 
       {/* welcome */}
-      {current && current.messages.length === 0 && (
+      {messages.length === 0 && (
         <div className="px-4 py-10 sm:px-6">
           <h1 className="text-center text-4xl sm:text-5xl font-extrabold tracking-tight text-zinc-200">
             Чем я могу помочь сегодня?
           </h1>
-          <p className="mt-3 text-center text-sm text-zinc-400">
-            Поддерживаются заголовки, списки, **жирный текст**, формулы LaTeX и код.
-          </p>
         </div>
       )}
 
@@ -450,7 +447,7 @@ export default function Chat() {
             </button>
 
             <button
-              className="rounded-2xl bg-white px-4 py-3 text-zinc-900 hover:bg-zinc-200 active:scale-95 transition disabled:opacity-50"
+              className="rounded-2xl bg-white px-4 py-3 text-zinc-900 hover:bg-зinc-200 active:scale-95 transition disabled:opacity-50"
               onClick={send}
               disabled={sending}
               aria-label="Отправить"
@@ -469,7 +466,7 @@ export default function Chat() {
             className="fixed inset-0 z-40 bg-black/50"
             onClick={() => setSidebarOpen(false)}
           />
-          <aside className="fixed inset-y-0 left-0 z-50 w-80 max-w-[85vw] bg-zinc-900 text-white shadow-xl">
+          <aside className="fixed inset-y-0 left-0 z-50 w-80 max-w-[85vw] bg-зinc-900 text-white shadow-xl">
             <div className="p-3 border-b border-white/10">
               <input
                 type="search"
@@ -479,7 +476,7 @@ export default function Chat() {
                 onChange={(e) => setQ(e.target.value)}
               />
               <button
-                className="mt-3 w-full rounded-xl bg-zinc-800 px-3 py-2 text-sm hover:bg-zinc-700 active:scale-95 transition"
+                className="mt-3 w-full rounded-xl bg-zinc-800 px-3 py-2 text-sm hover:bg-зinc-700 active:scale-95 transition"
                 onClick={newChat}
               >
                 Новый чат
@@ -494,7 +491,7 @@ export default function Chat() {
                     "mt-2 flex items-center gap-2 rounded-lg px-3 py-2 transition",
                     s.id === currentId
                       ? "bg-emerald-600/20 ring-1 ring-emerald-500/50"
-                      : "bg-zinc-800 hover:bg-zinc-700"
+                      : "bg-зinc-800 hover:bg-зinc-700"
                   )}
                 >
                   <button
@@ -508,7 +505,7 @@ export default function Chat() {
                     {s.title || "Новый чат"}
                   </button>
                   <button
-                    className="rounded-md p-1 text-zinc-300 hover:bg-zinc-700 hover:text-white active:scale-95 transition"
+                    className="rounded-md p-1 text-зinc-300 hover:bg-зinc-700 hover:text-white active:scale-95 transition"
                     title="Удалить чат"
                     onClick={() => {
                       if (confirm("Удалить этот чат?")) deleteChat(s.id);
