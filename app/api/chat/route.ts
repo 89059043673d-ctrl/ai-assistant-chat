@@ -1,72 +1,56 @@
-import { NextRequest } from "next/server";
-import OpenAI from "openai";
+import OpenAI from 'openai';
+import { NextRequest } from 'next/server';
 
-type ChatMsg = { role: "system" | "user" | "assistant"; content: string };
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
-export const runtime = "edge";
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+type Msg = { role: 'system' | 'user' | 'assistant'; content: string };
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const history = (body?.history ?? []) as { role: string; content: string }[];
-    const userText = (body?.text ?? "") as string;
+    const { messages }: { messages: Msg[] } = await req.json();
 
-    const messages: ChatMsg[] = [
-      {
-        role: "system",
-        content:
-          "Ты полезный ассистент. Отвечай кратко и по делу, без приветствий и без лишних вводных. " +
-          "Сохраняй разметку Markdown (жирный, заголовки, списки) и формулы LaTeX. " +
-          "По умолчанию отвечай на русском, но если пользователь пишет не по-русски — отвечай на его языке.",
-      },
-      ...history
-        .filter((m) => m && typeof m.role === "string" && typeof m.content === "string")
-        .map((m) => ({
-          role: (m.role === "user" || m.role === "assistant" ? m.role : "user") as
-            | "user"
-            | "assistant",
-          content: m.content,
-        })),
-      ...(userText ? [{ role: "user" as const, content: userText }] : []),
-    ];
+    const sys: Msg = {
+      role: 'system',
+      content:
+        'Ты дружелюбный помощник. Отвечай в Markdown (заголовки, списки, **жирный**, код). ' +
+        'Математику оформляй через LaTeX c двойными долларами $$ ... $$ (KaTeX). ' +
+        'Не используй HTML, только markdown.',
+    };
 
-    const client = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-    });
-
-    const resp = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages,
-      temperature: 0.2,
+    const stream = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
       stream: true,
+      messages: [sys, ...messages],
+      temperature: 0.4,
     });
 
-    const stream = new ReadableStream({
-      start(controller) {
-        (async () => {
-          try {
-            for await (const chunk of resp) {
-              const delta = chunk.choices?.[0]?.delta?.content ?? "";
-              if (delta) controller.enqueue(new TextEncoder().encode(delta));
-            }
-            controller.close();
-          } catch (e) {
-            controller.error(e);
-          }
-        })();
+    const encoder = new TextEncoder();
+
+    const readable = new ReadableStream({
+      async start(controller) {
+        for await (const chunk of stream) {
+          const token = chunk.choices[0]?.delta?.content || '';
+          if (token) controller.enqueue(encoder.encode(token));
+        }
+        controller.close();
       },
     });
 
-    return new Response(stream, {
+    return new Response(readable, {
       headers: {
-        "Content-Type": "text/plain; charset=utf-8",
-        "Cache-Control": "no-cache",
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Cache-Control': 'no-store',
       },
     });
-  } catch (e) {
+  } catch (e: any) {
     return new Response(
-      "Не удалось получить ответ от модели. Проверьте Billing и переменную OPENAI_API_KEY на Vercel.",
-      { status: 500 }
+      'Не удалось получить ответ от модели. Проверьте Billing и переменную OPENAI_API_KEY на Vercel.',
+      { status: 200, headers: { 'Content-Type': 'text/plain; charset=utf-8' } }
     );
   }
 }
