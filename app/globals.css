@@ -1,3 +1,4 @@
+@import 'katex/dist/katex.min.css';
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -34,3 +35,12 @@ body {
 textarea {
   line-height: 1.4;
 }
+/* Markdown/KaTeX под тёмную тему */
+.prose {
+  color: inherit;
+}
+.prose h1, .prose h2, .prose h3 { color: #fff; }
+.prose p { margin: 0.4rem 0; }
+.prose ul, .prose ol { margin: 0.4rem 0; }
+.prose strong { font-weight: 700; }
+.katex { font-size: 1.02em; }
