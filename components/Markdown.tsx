@@ -1,14 +1,11 @@
 "use client";
 
-import remarkBreaks from "remark-breaks";
 import React from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import rehypeKatex from "rehype-katex";
 import remarkMath from "remark-math";
-
-// стили KaTeX должны быть подключены однажды в глобалах:
-// import "katex/dist/katex.min.css";
+import rehypeKatex from "rehype-katex";
+import remarkBreaks from "remark-breaks";
 
 type Props = {
   children: string;
@@ -19,18 +16,14 @@ export default function Markdown({ children, className }: Props) {
   return (
     <div className={className}>
       <ReactMarkdown
-<ReactMarkdown
-  remarkPlugins={[remarkGfm, remarkMath, remarkBreaks]}
-  rehypePlugins={[rehypeKatex]}
-  /* остальное без изменений */
->
-        // HTML не рендерим для безопасности
+        remarkPlugins={[remarkGfm, remarkMath, remarkBreaks]}
+        rehypePlugins={[rehypeKatex]}
+        // Не даём рендерить сырой HTML из модели
         skipHtml
-        // кастомизация некоторых элементов
         components={{
-          // однострочный код
+          // однострочный код `inline`
           code: (props: any) => {
-            const { inline, className, children, ...rest } = props;
+            const { inline, children, ...rest } = props;
             if (inline) {
               return (
                 <code
