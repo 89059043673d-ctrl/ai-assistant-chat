@@ -51,8 +51,9 @@ export default function Chat() {
         setChats([init]);
         setCurrentId(init.id);
       } else {
-        setChats(parsed.sort((a, b) => b.updatedAt - a.updatedAt));
-        setCurrentId(parsed[0].id);
+        const ordered = parsed.sort((a, b) => b.updatedAt - a.updatedAt);
+        setChats(ordered);
+        setCurrentId(ordered[0].id);
       }
     } catch {
       const init = emptyChat();
@@ -109,7 +110,7 @@ export default function Chat() {
             const { value, done } = await reader.read();
             if (done) break;
             acc += new TextDecoder().decode(value);
-            pushPartial(currentChat.id, acc); // ВАЖНО: не переписываем сообщение пользователя
+            pushPartial(currentChat.id, acc); // не перезаписываем пользовательское
           }
         }
       }
@@ -148,10 +149,6 @@ export default function Chat() {
       updated[updated.length - 1] = { ...last, content: text };
       return { ...c, messages: updated };
     });
-  }
-
-  function clearChat(id: string) {
-    touchChat(id, (c) => ({ ...c, messages: [] }));
   }
 
   function newChat() {
@@ -212,13 +209,24 @@ export default function Chat() {
 
   // ---------- UI ----------
   const showGreeting = (currentChat?.messages.length ?? 0) === 0;
-
   const filteredChats = chats.filter((c) =>
     (c.title || 'Новый чат').toLowerCase().includes(query.toLowerCase())
   );
 
   return (
     <div className="flex h-dvh">
+      {/* Плавающая кнопка гамбургера, если сайдбар скрыт */}
+      {!sidebarOpen && (
+        <button
+          className="fab-menu"
+          onClick={() => setSidebarOpen(true)}
+          aria-label="Открыть меню"
+          title="Меню"
+        >
+          <Menu size={18} />
+        </button>
+      )}
+
       {/* Сайдбар */}
       <aside
         className={`border-r border-border bg-panel w-72 shrink-0 transition-transform duration-200 ${
@@ -229,15 +237,19 @@ export default function Chat() {
           <div className="font-semibold">Диалоги</div>
           <button
             className="p-2 rounded hover:bg-panelAlt"
-            onClick={() => setSidebarOpen((s) => !s)}
-            title="Скрыть/показать"
+            onClick={() => setSidebarOpen(false)}
+            title="Скрыть"
+            aria-label="Скрыть меню"
           >
             <Menu size={18} />
           </button>
         </div>
 
         <div className="p-3 space-y-3">
-          <button onClick={newChat} className="w-full inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-200 text-zinc-900 hover:opacity-90">
+          <button
+            onClick={newChat}
+            className="w-full inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-200 text-zinc-900 hover:opacity-90"
+          >
             <Plus size={16} />
             Новый чат
           </button>
@@ -246,7 +258,7 @@ export default function Chat() {
             <Search className="absolute left-3 top-2.5" size={16} />
             <input
               className="w-full pl-9 pr-3 py-2 rounded-lg border border-border bg-panelAlt outline-none focus:ring-1 focus:ring-zinc-600"
-              placeholder="Поиск..."
+              placeholder="Поиск по чатам…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
@@ -258,22 +270,25 @@ export default function Chat() {
 
           <div className="space-y-1">
             {filteredChats.map((c) => (
-              <button
+              <div
                 key={c.id}
-                onClick={() => setCurrentId(c.id)}
-                className={`w-full text-left px-3 py-2 rounded-lg hover:bg-panelAlt ${
+                className={`w-full px-3 py-2 rounded-lg hover:bg-panelAlt cursor-pointer ${
                   currentId === c.id ? 'bg-panelAlt' : ''
                 }`}
               >
-                <div className="flex items-center justify-between">
-                  <span className="truncate">{c.title || 'Новый чат'}</span>
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    className="flex-1 text-left truncate"
+                    onClick={() => setCurrentId(c.id)}
+                    title="Открыть чат"
+                  >
+                    {c.title || 'Новый чат'}
+                  </button>
                   <button
                     className="p-1 rounded hover:bg-zinc-800"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      deleteChat(c.id);
-                    }}
+                    onClick={() => deleteChat(c.id)}
                     title="Удалить чат"
+                    aria-label="Удалить чат"
                   >
                     <Trash2 size={14} />
                   </button>
@@ -281,7 +296,7 @@ export default function Chat() {
                 <div className="text-xs text-subtext truncate">
                   {c.messages[c.messages.length - 1]?.content || 'Пусто'}
                 </div>
-              </button>
+              </div>
             ))}
           </div>
 
@@ -293,12 +308,13 @@ export default function Chat() {
 
       {/* Основная панель */}
       <main className="flex-1 min-w-0 flex flex-col bg-bg">
-        {/* Верхняя линия с гамбургером (мобил/узко) */}
+        {/* Верхняя линия с гамбургером (всегда видна при узком экране) */}
         <header className="flex items-center gap-2 px-4 py-3 border-b border-border">
           <button
             className="p-2 rounded hover:bg-panelAlt"
             onClick={() => setSidebarOpen((s) => !s)}
             title="Меню"
+            aria-label="Меню"
           >
             <Menu size={18} />
           </button>
@@ -331,6 +347,7 @@ export default function Chat() {
                     className="inline-flex items-center gap-1 hover:text-zinc-200"
                     onClick={() => copyToClipboard(m.content)}
                     title="Скопировать"
+                    aria-label="Скопировать сообщение"
                   >
                     <Copy size={14} /> Скопировать
                   </button>
@@ -344,10 +361,15 @@ export default function Chat() {
         {/* Нижняя панель ввода */}
         <footer className="border-t border-border p-3 bg-panel">
           <div className="max-w-3xl mx-auto flex items-end gap-2">
-            <button className={`icon-btn ${recOn ? 'bg-panelAlt' : ''}`} onClick={toggleRec} title="Микрофон">
+            <button
+              className={`icon-btn ${recOn ? 'bg-panelAlt' : ''}`}
+              onClick={toggleRec}
+              title="Микрофон"
+              aria-label="Микрофон"
+            >
               <Mic size={18} />
             </button>
-            <button className="icon-btn" title="Прикрепить">
+            <button className="icon-btn" title="Прикрепить" aria-label="Прикрепить">
               <Paperclip size={18} />
             </button>
 
@@ -368,20 +390,12 @@ export default function Chat() {
               onClick={sendMessage}
               disabled={sending || !input.trim()}
               title="Отправить"
+              aria-label="Отправить"
             >
               <Send size={18} />
             </button>
           </div>
-
-          <div className="max-w-3xl mx-auto mt-2 flex items-center justify-between">
-            <button
-              className="text-xs text-subtext hover:text-zinc-200 inline-flex items-center gap-1"
-              onClick={() => currentChat && clearChat(currentChat.id)}
-              title="Очистить историю текущего диалога"
-            >
-              <Trash2 size={14} /> Очистить чат
-            </button>
-          </div>
+          {/* НИЖНЮЮ КНОПКУ «ОЧИСТИТЬ ЧАТ» УДАЛИЛ */}
         </footer>
       </main>
     </div>
