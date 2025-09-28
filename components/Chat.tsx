@@ -1,511 +1,483 @@
-"use client";
+'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Menu, Paperclip, Send, Mic, Copy, Check, Trash2 } from "lucide-react";
-import Markdown from "./Markdown";
-import clsx from "clsx";
+import { useEffect, useMemo, useRef, useState } from 'react';
+import Markdown from './Markdown';
+import { Copy, Mic, Paperclip, Send, Trash2, Plus, Menu, ChevronDown } from 'lucide-react';
 
-type Msg = { id: string; role: "user" | "assistant"; content: string; ts: number };
-type ChatSession = { id: string; title: string; created: number; messages: Msg[] };
+type Role = 'user' | 'assistant';
+type Msg = { role: Role; content: string };
+type Chat = { id: string; title: string; messages: Msg[] };
 
-declare global {
-  interface Window {
-    webkitSpeechRecognition?: any;
-    SpeechRecognition?: any;
+const STORAGE_KEY = 'chats_v1';
+
+// Простая генерация уникальных ID без зависимости 'uuid'
+const genId = () => {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID();
   }
-}
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+};
 
-const LS_OLD = "chat.history.v1";
-const LS_SESS = "chat.sessions.v1";
+// Минимальное описание API распознавания речи (чтобы не тянуть типы извне)
+type SpeechRec = {
+  lang: string;
+  interimResults: boolean;
+  continuous: boolean;
+  start: () => void;
+  stop: () => void;
+  onresult: ((e: any) => void) | null;
+  onend: (() => void) | null;
+  onerror: ((e: any) => void) | null;
+} | null;
 
 export default function Chat() {
-  // ---------- sessions ----------
-  const [sessions, setSessions] = useState<ChatSession[]>([]);
-  const [currentId, setCurrentId] = useState<string | null>(null);
-  const [q, setQ] = useState("");
-
-  // ---------- input state ----------
-  const [text, setText] = useState("");
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [currentId, setCurrentId] = useState<string>('');
+  const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-
-  // attachments
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [attachedNames, setAttachedNames] = useState<string[]>([]);
-
-  // mic
-  const recRef = useRef<any>(null);
+  const [search, setSearch] = useState('');
   const [recOn, setRecOn] = useState(false);
-  const lastFinalRef = useRef<string>("");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const recRef = useRef<SpeechRec>(null);
 
-  // ---------- init / migration ----------
+  // ------------------ ЗАГРУЗКА / СОХРАНЕНИЕ ------------------
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(LS_SESS);
-      if (raw) {
-        const parsed = JSON.parse(raw) as ChatSession[];
-        if (Array.isArray(parsed) && parsed.length) {
-          setSessions(parsed);
-          setCurrentId(parsed[0].id);
-          return;
-        }
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) {
+        const init = emptyChat();
+        setChats([init]);
+        setCurrentId(init.id);
+        return;
       }
-      const oldRaw = localStorage.getItem(LS_OLD);
-      if (oldRaw) {
-        const msgs = JSON.parse(oldRaw) as Msg[];
-        const title =
-          msgs.find((m) => m.role === "user")?.content?.slice(0, 40) ||
-          "Новый чат";
-        const sess: ChatSession = {
-          id: crypto.randomUUID(),
-          title,
-          created: Date.now(),
-          messages: Array.isArray(msgs) ? msgs : [],
-        };
-        setSessions([sess]);
-        setCurrentId(sess.id);
-        localStorage.setItem(LS_SESS, JSON.stringify([sess]));
+      const parsed: Chat[] = JSON.parse(raw);
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        const init = emptyChat();
+        setChats([init]);
+        setCurrentId(init.id);
       } else {
-        const sess: ChatSession = {
-          id: crypto.randomUUID(),
-          title: "Новый чат",
-          created: Date.now(),
-          messages: [],
-        };
-        setSessions([sess]);
-        setCurrentId(sess.id);
-        localStorage.setItem(LS_SESS, JSON.stringify([sess]));
+        setChats(parsed);
+        setCurrentId(parsed[0].id);
       }
-    } catch {}
+    } catch {
+      const init = emptyChat();
+      setChats([init]);
+      setCurrentId(init.id);
+    }
   }, []);
 
   useEffect(() => {
     try {
-      if (sessions.length) localStorage.setItem(LS_SESS, JSON.stringify(sessions));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(chats));
     } catch {}
-  }, [sessions]);
+  }, [chats]);
 
-  const current = useMemo(
-    () => sessions.find((s) => s.id === currentId) || null,
-    [sessions, currentId]
+  // ------------------ ДЕРИВАТЫ ------------------
+  const currentChat = useMemo(
+    () => chats.find((c) => c.id === currentId) ?? null,
+    [chats, currentId]
   );
 
-  const setCurrentMessages = (fn: (prev: Msg[]) => Msg[]) => {
-    if (!current) return;
-    setSessions((prev) =>
-      prev.map((s) =>
-        s.id === current.id ? { ...s, messages: fn(s.messages) } : s
-      )
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return chats;
+    return chats.filter(
+      (c) =>
+        c.title.toLowerCase().includes(q) ||
+        c.messages.some((m) => m.content.toLowerCase().includes(q))
     );
-  };
+  }, [chats, search]);
 
-  // ---------- helpers ----------
-  const copyText = async (id: string, content: string) => {
-    try {
-      await navigator.clipboard.writeText(content);
-      setCopiedId(id);
-      setTimeout(() => setCopiedId(null), 900);
-    } catch {}
-  };
-
-  const onPickFile = () => fileInputRef.current?.click();
-  const onFilesChosen = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const names = Array.from(e.target.files ?? []).map((f) => f.name);
-    if (names.length) setAttachedNames(names);
-  };
-
-  const newChat = () => {
-    const sess: ChatSession = {
-      id: crypto.randomUUID(),
-      title: "Новый чат",
-      created: Date.now(),
-      messages: [],
-    };
-    setSessions((prev) => [sess, ...prev]);
-    setCurrentId(sess.id);
-    setText("");
-    setAttachedNames([]);
-    setSidebarOpen(false);
-  };
-
-  const deleteChat = (id: string) => {
-    setSessions((prev) => {
-      const next = prev.filter((s) => s.id !== id);
-      const nextId = next[0]?.id ?? null;
-      setCurrentId(nextId);
-      return next;
-    });
-  };
-
-  const ensureTitle = (firstUserText: string) => {
-    if (!current) return;
-    if (!current.title || current.title === "Новый чат") {
-      const title = firstUserText.replace(/\s+/g, " ").trim().slice(0, 40);
-      setSessions((prev) =>
-        prev.map((s) => (s.id === current.id ? { ...s, title } : s))
-      );
-    }
-  };
-
-  // ---------- mic without duplicates ----------
+  // Автоскролл вниз при новых сообщениях
   useEffect(() => {
-    if (!recOn) return;
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
-    if (!SR) {
-      setRecOn(false);
-      alert("Распознавание речи не поддерживается в этом браузере.");
-      return;
-    }
-    const rec = new SR();
-    rec.lang = "ru-RU";
-    rec.interimResults = true;
-    rec.continuous = true;
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [currentChat?.messages.length]);
 
-    rec.onresult = (e: any) => {
-      const r = e.results[e.results.length - 1];
-      if (!r) return;
-      const phrase = (r[0]?.transcript || "").trim();
-      if (!phrase) return;
-      if (r.isFinal) {
-        if (phrase !== lastFinalRef.current) {
-          setText((t) => (t ? t + " " : "") + phrase);
-          lastFinalRef.current = phrase;
-        }
-      }
-    };
-    rec.onerror = () => setRecOn(false);
-    rec.onend = () => setRecOn(false);
+  // Фокус на textarea после открытия
+  useEffect(() => {
+    textareaRef.current?.focus();
+  }, [currentId]);
 
-    try {
-      rec.start();
-      recRef.current = rec;
-    } catch {
-      setRecOn(false);
-    }
-    return () => {
-      try {
-        rec.stop();
-      } catch {}
-      recRef.current = null;
-    };
-  }, [recOn]);
-
-  const toggleMic = () => {
-    setRecOn((v) => {
-      if (v && recRef.current) {
-        try {
-          recRef.current.stop();
-        } catch {}
-      } else {
-        lastFinalRef.current = "";
-      }
-      return !v;
-    });
-  };
-
-  // ---------- send ----------
-  const send = async () => {
-    if (!current) return;
-    const userText = text.trim();
-    if (!userText || sending) return;
-
-    const withAttach =
-      attachedNames.length > 0
-        ? `${userText}\n\n[Вложения: ${attachedNames.join(", ")}]`
-        : userText;
-
-    ensureTitle(userText);
+  // ------------------ ОБРАБОТЧИКИ ------------------
+  async function sendMessage() {
+    if (!currentChat || sending) return;
+    const text = input.trim();
+    if (!text) return;
 
     setSending(true);
-    setCurrentMessages((prev) => [
-      ...prev,
-      { id: crypto.randomUUID(), role: "user", content: withAttach, ts: Date.now() },
-    ]);
-    setText("");
-    setAttachedNames([]);
+    setInput('');
+
+    const userMsg: Msg = { role: 'user', content: text };
+    pushMessage(currentChat.id, userMsg);
 
     try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          text: withAttach,
-          history: current.messages.map(({ role, content }) => ({ role, content })),
+          messages: [...currentChat.messages, userMsg],
         }),
       });
 
-      if (!res.ok || !res.body) {
-        setCurrentMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content:
-              "Не удалось получить ответ от модели. Проверьте Billing и переменную OPENAI_API_KEY на Vercel.",
-            ts: Date.now(),
-          },
-        ]);
-        setSending(false);
-        return;
+      if (!res.ok) {
+        const err = await safeText(res);
+        pushMessage(currentChat.id, {
+          role: 'assistant',
+          content: `Ошибка ответа от сервера: ${res.status} ${err || ''}`.trim(),
+        });
+      } else {
+        const reader = res.body?.getReader();
+        if (!reader) {
+          pushMessage(currentChat.id, {
+            role: 'assistant',
+            content: 'Пустой ответ сервера.',
+          });
+        } else {
+          let acc = '';
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            acc += new TextDecoder().decode(value);
+            // визуальный прогресс (не добавляет новое сообщение)
+            pushPartial(currentChat.id, acc);
+          }
+          // финализация
+          pushMessage(currentChat.id, { role: 'assistant', content: acc });
+          clearPartial(currentChat.id);
+        }
       }
-
-      const reader = res.body.getReader();
-      const dec = new TextDecoder();
-      const id = crypto.randomUUID();
-      let acc = "";
-
-      setCurrentMessages((prev) => [
-        ...prev,
-        { id, role: "assistant", content: "", ts: Date.now() },
-      ]);
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        acc += dec.decode(value, { stream: true });
-        setCurrentMessages((prev) =>
-          prev.map((m) => (m.id === id ? { ...m, content: acc } : m))
-        );
-      }
-    } catch {
-      setCurrentMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content:
-            "Не удалось получить ответ от модели. Проверьте Billing и переменную OPENAI_API_KEY на Vercel.",
-          ts: Date.now(),
-        },
-      ]);
+    } catch (e: any) {
+      pushMessage(currentChat.id, {
+        role: 'assistant',
+        content: `Ошибка сети: ${e?.message || e}`,
+      });
     } finally {
       setSending(false);
+      textareaRef.current?.focus();
     }
-  };
+  }
 
-  const onEnterSend = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+  function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
-      send();
+      sendMessage();
     }
-  };
+  }
 
-  const filteredSessions = useMemo(() => {
-    const qv = q.trim().toLowerCase();
-    if (!qv) return sessions;
-    return sessions.filter((s) => {
-      if (s.title.toLowerCase().includes(qv)) return true;
-      return s.messages.some((m) => m.content.toLowerCase().includes(qv));
-    });
-  }, [sessions, q]);
+  // ------------------ КЛИПБОРД ------------------
+  async function copyMessage(id: string, content: string) {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 1000);
+    } catch {}
+  }
 
-  // ---------- UI ----------
+  // ------------------ ФАЙЛЫ ------------------
+  function openFileDialog() {
+    fileInputRef.current?.click();
+  }
+
+  async function onFilePicked(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (!f || !currentChat) return;
+    setSending(true);
+    try {
+      const form = new FormData();
+      form.append('file', f);
+      const res = await fetch('/api/transcribe', {
+        method: 'POST',
+        body: form,
+      });
+      if (!res.ok) {
+        const err = await safeText(res);
+        pushMessage(currentChat.id, {
+          role: 'assistant',
+          content: `Ошибка распознавания: ${res.status} ${err || ''}`.trim(),
+        });
+      } else {
+        const text = await res.text();
+        setInput((t) => (t ? t + '\n' : '') + text);
+      }
+    } catch (e: any) {
+      pushMessage(currentChat.id, {
+        role: 'assistant',
+        content: `Ошибка загрузки файла: ${e?.message || e}`,
+      });
+    } finally {
+      setSending(false);
+      e.target.value = '';
+      textareaRef.current?.focus();
+    }
+  }
+
+  // ------------------ РЕЙМЫ ЧАТОВ ------------------
+  function newChat() {
+    const c = emptyChat();
+    setChats((arr) => [c, ...arr]);
+    setCurrentId(c.id);
+    setTimeout(() => textareaRef.current?.focus(), 0);
+  }
+
+  function deleteChat(id: string) {
+    setChats((arr) => arr.filter((c) => c.id !== id));
+    if (currentId === id) {
+      const rest = chats.filter((c) => c.id !== id);
+      setCurrentId(rest[0]?.id || '');
+      if (rest.length === 0) {
+        const c = emptyChat();
+        setChats([c]);
+        setCurrentId(c.id);
+      }
+    }
+  }
+
+  function renameChat(id: string, title: string) {
+    setChats((arr) =>
+      arr.map((c) => (c.id === id ? { ...c, title: title || 'Без названия' } : c))
+    );
+  }
+
+  // ------------------ СООБЩЕНИЯ ------------------
+  function pushMessage(id: string, msg: Msg) {
+    setChats((arr) =>
+      arr.map((c) => (c.id === id ? { ...c, messages: [...c.messages, msg] } : c))
+    );
+  }
+
+  // «стриминговая» подстановка (визуальный прогресс)
+  function pushPartial(id: string, text: string) {
+    setChats((arr) =>
+      arr.map((c) =>
+        c.id !== id
+          ? c
+          : {
+              ...c,
+              messages:
+                c.messages.length === 0
+                  ? [{ role: 'assistant', content: text }]
+                  : [
+                      ...c.messages.slice(0, -1),
+                      { ...c.messages[c.messages.length - 1], content: text },
+                    ],
+            }
+      )
+    );
+  }
+
+  function clearPartial(_id: string) {
+    // ничего, т.к. pushMessage финализирует
+  }
+
+  // ------------------ МИКРОФОН ------------------
+  function toggleRec() {
+    setRecOn((on) => !on);
+  }
+
+  // Микрофон инициализация
+  useEffect(() => {
+    // Только на клиенте
+    if (typeof window === 'undefined') return;
+
+    const SR: any =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+    if (!SR) return; // браузер не поддерживает
+
+    if (recOn && !recRef.current) {
+      const r = new SR() as NonNullable<SpeechRec>;
+      r.lang = 'ru-RU';
+      r.interimResults = false;
+      r.continuous = false;
+      r.onresult = (e: any) => {
+        const res = e?.results?.[0]?.[0]?.transcript;
+        if (res) setInput((t) => (t ? t + ' ' : '') + res);
+      };
+      r.onend = () => setRecOn(false);
+      r.onerror = () => setRecOn(false);
+      recRef.current = r;
+      r.start();
+    }
+    if (!recOn && recRef.current) {
+      recRef.current.stop();
+      recRef.current = null;
+    }
+  }, [recOn]);
+
+  // ------------------ UI ------------------
   return (
-    <div className="min-h-screen bg-zinc-900 text-zinc-100">
-      {/* top */}
-      <div className="sticky top-0 z-30 flex items-center gap-3 border-b border-white/10 bg-zinc-900/90 px-3 py-2 backdrop-blur">
-        <button
-          className="rounded-xl p-2 hover:bg-white/5 active:scale-95 transition"
-          onClick={() => setSidebarOpen(true)}
-          aria-label="Открыть меню"
-        >
-          <Menu className="h-5 w-5" />
-        </button>
-        <div className="text-sm opacity-70">Мой ИИ-ассистент</div>
-      </div>
-
-      {/* welcome */}
-      {current && current.messages.length === 0 && (
-        <div className="px-4 py-10 sm:px-6">
-          <h1 className="text-center text-4xl sm:text-5xl font-extrabold tracking-tight text-zinc-200">
-            Чем я могу помочь сегодня?
-          </h1>
-          <p className="mt-3 text-center text-sm text-zinc-400">
-            Поддерживаются заголовки, списки, **жирный текст**, формулы LaTeX и код.
-          </p>
-        </div>
-      )}
-
-      {/* messages */}
-      <div className="mx-auto max-w-3xl px-3 pb-36 sm:px-4">
-        {current?.messages.map((m) => (
-          <div
-            key={m.id}
-            className={clsx(
-              "mt-3 flex",
-              m.role === "user" ? "justify-end" : "justify-start"
-            )}
+    <div className="flex h-full">
+      {/* Сайдбар */}
+      <aside
+        className={`border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 w-72 shrink-0 transition-transform ${drawerOpen ? 'translate-x-0' : '-translate-x-72'} md:translate-x-0`}
+      >
+        <div className="p-3 flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-800">
+          <button
+            className="md:hidden p-2 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800"
+            onClick={() => setDrawerOpen(false)}
+            aria-label="Закрыть меню"
           >
+            <Menu className="w-5 h-5" />
+          </button>
+          <button
+            onClick={newChat}
+            className="flex items-center gap-2 px-3 py-2 rounded-md bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 hover:opacity-90"
+          >
+            <Plus className="w-4 h-4" />
+            Новый чат
+          </button>
+          <div className="ml-auto relative">
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Поиск…"
+              className="text-sm rounded-md px-2 py-1 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 outline-none"
+            />
+          </div>
+        </div>
+
+        <div className="overflow-y-auto max-h-[calc(100vh-3.25rem)]">
+          {filtered.map((c) => (
             <div
-              className={clsx(
-                "group relative rounded-2xl px-4 py-3 shadow max-w-[90%]",
-                m.role === "user"
-                  ? "bg-zinc-100 text-zinc-900"
-                  : "bg-zinc-800/90 text-zinc-100"
-              )}
+              key={c.id}
+              className={`group flex items-center gap-2 px-3 py-2 text-sm cursor-pointer ${currentId === c.id ? 'bg-zinc-200 dark:bg-zinc-800' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800/60'}`}
+              onClick={() => setCurrentId(c.id)}
             >
-              {/* copy */}
-              <button
-                className={clsx(
-                  "absolute -right-2 -top-2 hidden rounded-full p-2 text-white/90 shadow transition group-hover:block active:scale-95",
-                  "bg-zinc-700"
-                )}
-                onClick={() => copyText(m.id, m.content)}
-                aria-label="Копировать"
-                title="Копировать"
-              >
-                {copiedId === m.id ? (
-                  <Check className="h-4 w-4" />
-                ) : (
-                  <Copy className="h-4 w-4" />
-                )}
-              </button>
-
-              {/* Markdown — и для ассистента, и для пользователя */}
-              <Markdown
-                className={clsx(
-                  "prose max-w-none prose-headings:mt-3 prose-p:my-2 prose-li:my-1",
-                  m.role === "user" ? "prose-zinc" : "prose-invert"
-                )}
-              >
-                {m.content}
-              </Markdown>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* input bar */}
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-white/10 bg-zinc-900/95 backdrop-blur">
-        {attachedNames.length > 0 && (
-          <div className="mx-auto max-w-3xl px-3 pt-3 sm:px-4">
-            <div className="flex flex-wrap gap-2">
-              {attachedNames.map((n) => (
-                <span
-                  key={n}
-                  className="rounded-full bg-zinc-800 px-2 py-1 text-xs text-zinc-300"
+              <span className="truncate">{c.title || 'Без названия'}</span>
+              <div className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100">
+                <button
+                  className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-700"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const newTitle = prompt('Новое имя чата', c.title);
+                    if (newTitle !== null) renameChat(c.id, newTitle);
+                  }}
+                  aria-label="Переименовать"
                 >
-                  {n}
-                </span>
-              ))}
+                  <ChevronDown className="w-4 h-4 rotate-90" />
+                </button>
+                <button
+                  className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-700"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (confirm('Удалить чат?')) deleteChat(c.id);
+                  }}
+                  aria-label="Удалить чат"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
             </div>
-          </div>
-        )}
+          ))}
+        </div>
+      </aside>
 
-        <div className="mx-auto max-w-3xl px-3 py-3 sm:px-4">
-          <div className="flex items-center gap-2">
+      {/* Контент */}
+      <main className="flex-1 flex flex-col h-full">
+        <div className="p-2 border-b border-zinc-200 dark:border-zinc-800 flex items-center gap-2">
+          <button
+            className="md:hidden p-2 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800"
+            onClick={() => setDrawerOpen(true)}
+            aria-label="Открыть меню"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          {currentChat?.messages.map((m, idx) => (
+            <div
+              key={idx}
+              className={`rounded-lg px-3 py-2 max-w-[85%] whitespace-pre-wrap break-words ${m.role === 'user' ? 'bg-zinc-100 dark:bg-zinc-800 ml-auto' : 'bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800'}`}
+            >
+              {m.role === 'assistant' ? (
+                <Markdown>{m.content}</Markdown>
+              ) : (
+                <div>{m.content}</div>
+              )}
+
+              <div className="flex items-center gap-2 mt-1 text-xs text-zinc-500">
+                <button
+                  onClick={() => copyMessage(String(idx), m.content)}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  {copiedId === String(idx) ? 'Скопировано' : 'Копировать'}
+                </button>
+              </div>
+            </div>
+          ))}
+          <div ref={bottomRef} />
+        </div>
+
+        <div className="border-t border-zinc-200 dark:border-zinc-800 p-3">
+          <div className="flex items-end gap-2">
             <button
-              className="rounded-2xl bg-zinc-800 p-3 text-zinc-200 hover:bg-zinc-700 active:scale-95 transition"
-              onClick={onPickFile}
+              onClick={openFileDialog}
+              className="p-2 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800"
               aria-label="Прикрепить файл"
               title="Прикрепить файл"
             >
-              <Paperclip className="h-5 w-5" />
+              <Paperclip className="w-5 h-5" />
             </button>
             <input
-              ref={fileInputRef}
               type="file"
-              multiple
+              ref={fileInputRef}
+              onChange={onFilePicked}
+              accept="audio/*, .txt, .md, .pdf, .doc, .docx"
               className="hidden"
-              onChange={onFilesChosen}
             />
 
-            <input
-              className="flex-1 rounded-2xl bg-zinc-800 px-4 py-3 text-base text-white placeholder:text-white/60 outline-none ring-1 ring-white/10 focus:ring-2 focus:ring-emerald-400/70"
-              placeholder="Спросите что-нибудь…"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={onEnterSend}
-            />
+            <div className="flex-1">
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={onKeyDown}
+                placeholder="Задай вопрос..."
+                rows={1}
+                className="w-full resize-none rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 outline-none"
+              />
+            </div>
 
             <button
-              className={clsx(
-                "rounded-2xl p-3 active:scale-95 transition",
-                recOn
-                  ? "bg-emerald-600 text-white hover:bg-emerald-500"
-                  : "bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
-              )}
-              onClick={toggleMic}
-              aria-label="Голосовой ввод"
-              title="Голосовой ввод"
-            >
-              <Mic className="h-5 w-5" />
-            </button>
-
-            <button
-              className="rounded-2xl bg-white px-4 py-3 text-zinc-900 hover:bg-zinc-200 active:scale-95 transition disabled:opacity-50"
-              onClick={send}
-              disabled={sending}
+              disabled={sending || !input.trim()}
+              onClick={sendMessage}
+              className="p-2 rounded bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 disabled:opacity-50"
               aria-label="Отправить"
               title="Отправить"
             >
-              <Send className="h-5 w-5" />
+              <Send className="w-5 h-5" />
+            </button>
+
+            <button
+              onClick={toggleRec}
+              className={`p-2 rounded ${recOn ? 'bg-red-600 text-white' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800'}`}
+              aria-label="Диктовка"
+              title="Голосовой ввод (русский)"
+            >
+              <Mic className="w-5 h-5" />
             </button>
           </div>
         </div>
-      </div>
-
-      {/* sidebar */}
-      {sidebarOpen && (
-        <>
-          <div
-            className="fixed inset-0 z-40 bg-black/50"
-            onClick={() => setSidebarOpen(false)}
-          />
-          <aside className="fixed inset-y-0 left-0 z-50 w-80 max-w-[85vw] bg-zinc-900 text-white shadow-xl">
-            <div className="p-3 border-b border-white/10">
-              <input
-                type="search"
-                placeholder="Поиск по чатам…"
-                className="w-full rounded-xl bg-zinc-800 px-3 py-2 text-white placeholder:text-white/60 outline-none ring-1 ring-white/10 focus:ring-2 focus:ring-emerald-400/70"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-              />
-              <button
-                className="mt-3 w-full rounded-xl bg-zinc-800 px-3 py-2 text-sm hover:bg-zinc-700 active:scale-95 transition"
-                onClick={newChat}
-              >
-                Новый чат
-              </button>
-            </div>
-
-            <div className="max-h-[70vh] overflow-y-auto px-3 pb-6">
-              {filteredSessions.map((s) => (
-                <div
-                  key={s.id}
-                  className={clsx(
-                    "mt-2 flex items-center gap-2 rounded-lg px-3 py-2 transition",
-                    s.id === currentId
-                      ? "bg-emerald-600/20 ring-1 ring-emerald-500/50"
-                      : "bg-zinc-800 hover:bg-zinc-700"
-                  )}
-                >
-                  <button
-                    className="flex-1 truncate text-left"
-                    title={s.title}
-                    onClick={() => {
-                      setCurrentId(s.id);
-                      setSidebarOpen(false);
-                    }}
-                  >
-                    {s.title || "Новый чат"}
-                  </button>
-                  <button
-                    className="rounded-md p-1 text-zinc-300 hover:bg-zinc-700 hover:text-white active:scale-95 transition"
-                    title="Удалить чат"
-                    onClick={() => {
-                      if (confirm("Удалить этот чат?")) deleteChat(s.id);
-                    }}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          </aside>
-        </>
-      )}
+      </main>
     </div>
   );
+
+  // ---------- ВСПОМОГАТЕЛЬНОЕ ----------
+  function emptyChat(): Chat {
+    return { id: genId(), title: 'Новый чат', messages: [] };
+  }
+}
+
+async function safeText(res: Response) {
+  try {
+    return await res.text();
+  } catch {
+    return '';
+  }
 }
