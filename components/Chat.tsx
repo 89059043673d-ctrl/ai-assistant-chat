@@ -1,290 +1,120 @@
 'use client';
 
-import {
-  useEffect, useMemo, useRef, useState, useCallback,
-} from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
-import Markdown from './Markdown'; // Убедитесь, что путь к этому компоненту верный
+import Markdown from './Markdown';
 import {
   Copy, Mic, Paperclip, Send, Trash2, Plus, Menu, Search, Clock, List,
 } from 'lucide-react';
 
-// ---------- TYPES ----------
 type Role = 'user' | 'assistant';
 type Msg = { role: Role; content: string };
 type Chat = { id: string; title: string; messages: Msg[]; updatedAt: number };
 
 const STORAGE_KEY = 'chats_v2';
 
-// ---------- HELPERS ----------
 const genId = () =>
   (typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
     : Math.random().toString(36).slice(2) + Date.now().toString(36));
 
-const emptyChat = (): Chat => ({
-  id: genId(),
-  title: 'Новый чат',
-  messages: [],
-  updatedAt: Date.now(),
-});
-
-async function safeText(res: Response) {
-  try {
-    return await res.text();
-  } catch {
-    return '';
-  }
-}
-
-async function copyToClipboard(content: string) {
-  try {
-    await navigator.clipboard.writeText(content);
-  } catch (e) {
-    console.error('Failed to copy text: ', e);
-  }
-}
-
-// ---------- CUSTOM HOOKS ----------
-
-/**
- * Хук для синхронизации состояния с Local Storage.
- */
-function useLocalStorage<T>(key: string, initialValue: T): [T, (value: T) => void] {
-  const [storedValue, setStoredValue] = useState<T>(() => {
-    if (typeof window === 'undefined') {
-      return initialValue;
-    }
-    try {
-      const item = window.localStorage.getItem(key);
-      return item ? JSON.parse(item) : initialValue;
-    } catch (error) {
-      console.error(error);
-      return initialValue;
-    }
-  });
-
-  const setValue = (value: T) => {
-    try {
-      setStoredValue(value);
-      if (typeof window !== 'undefined') {
-        window.localStorage.setItem(key, JSON.stringify(value));
-      }
-    } catch (error) {
-      console.error(error);
-    }
-  };
-
-  return [storedValue, setValue];
-}
-
-/**
- * Хук для управления логикой чатов.
- */
-function useChatManager() {
-  const [chats, setChats] = useLocalStorage<Chat[]>(STORAGE_KEY, []);
+export default function Chat() {
+  const [chats, setChats] = useState<Chat[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(null);
+  const [input, setInput] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [recOn, setRecOn] = useState(false);
+  const [query, setQuery] = useState('');
 
-  // Инициализация и выбор первого чата при загрузке
+  // высота композитора (нижней панели) — чтобы отступить сообщения и не перекрывать их
+  const [composerH, setComposerH] = useState<number>(88); // дефолтно ~88px
+
+  const currentChat = useMemo(
+    () => chats.find((c) => c.id === currentId) || null,
+    [chats, currentId]
+  );
+
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const recRef = useRef<any>(null);
+  const composerRef = useRef<HTMLDivElement | null>(null);
+
+  // ---------- загрузка/сохранение ----------
   useEffect(() => {
-    if (chats.length > 0) {
-      const ordered = [...chats].sort((a, b) => b.updatedAt - a.updatedAt);
-      if (JSON.stringify(ordered) !== JSON.stringify(chats)) {
-        setChats(ordered);
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) {
+        const init = emptyChat();
+        setChats([init]);
+        setCurrentId(init.id);
+        return;
       }
-      if (!currentId || !chats.some(c => c.id === currentId)) {
+      const parsed: Chat[] = JSON.parse(raw);
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        const init = emptyChat();
+        setChats([init]);
+        setCurrentId(init.id);
+      } else {
+        const ordered = parsed.sort((a, b) => b.updatedAt - a.updatedAt);
+        setChats(ordered);
         setCurrentId(ordered[0].id);
       }
-    } else {
+    } catch {
       const init = emptyChat();
       setChats([init]);
       setCurrentId(init.id);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Запускается только один раз
-
-  const currentChat = useMemo(() => chats.find((c) => c.id === currentId) || null, [chats, currentId]);
-
-  const touchChat = useCallback((id: string, updater: (c: Chat) => Partial<Chat>) => {
-    setChats((arr) =>
-      arr
-        .map((c) => (c.id === id ? { ...c, ...updater(c), updatedAt: Date.now() } : c))
-        .sort((a, b) => b.updatedAt - a.updatedAt)
-    );
-  }, [setChats]);
-
-  const pushMessage = useCallback((id: string, msg: Msg) => {
-    touchChat(id, (c) => ({ messages: [...c.messages, msg] }));
-  }, [touchChat]);
-
-  const pushPartial = useCallback((id: string, text: string) => {
-    touchChat(id, (c) => {
-      const last = c.messages[c.messages.length - 1];
-      if (!last || last.role !== 'assistant') {
-        return { messages: [...c.messages, { role: 'assistant', content: text }] };
-      }
-      const updated = [...c.messages];
-      updated[updated.length - 1] = { ...last, content: text };
-      return { messages: updated };
-    });
-  }, [touchChat]);
-
-  const newChat = useCallback(() => {
-    const nc = emptyChat();
-    setChats((arr) => [nc, ...arr]);
-    setCurrentId(nc.id);
-  }, [setChats]);
-
-  const deleteChat = useCallback((id: string) => {
-    setChats((arr) => {
-      const filtered = arr.filter((c) => c.id !== id);
-      if (filtered.length === 0) {
-        const nc = emptyChat();
-        setCurrentId(nc.id);
-        return [nc];
-      }
-      if (currentId === id) {
-        setCurrentId(filtered[0].id);
-      }
-      return filtered;
-    });
-  }, [currentId, setChats]);
-
-  return {
-    chats,
-    currentChat,
-    currentId,
-    setCurrentId,
-    newChat,
-    deleteChat,
-    pushMessage,
-    pushPartial,
-  };
-}
-
-/**
- * Хук для распознавания речи.
- */
-function useSpeechRecognition({ onResult }: { onResult: (text: string) => void }) {
-  const [isRecording, setIsRecording] = useState(false);
-  const recRef = useRef<any>(null);
-
-  const toggleRecording = useCallback(() => {
-    setIsRecording((prev) => !prev);
   }, []);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) return;
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(chats));
+    } catch {}
+  }, [chats]);
 
-    if (isRecording && !recRef.current) {
-      const r = new SR();
-      r.continuous = true;
-      r.interimResults = true;
-      r.lang = 'ru-RU';
-      r.onresult = (e: any) => {
-        let final = '';
-        for (let i = e.resultIndex; i < e.results.length; i++) {
-          if (e.results[i].isFinal) {
-            final += e.results[i][0].transcript;
-          }
-        }
-        if (final) onResult(final);
-      };
-      r.onend = () => {
-        setIsRecording(false);
-        recRef.current = null;
-      };
-      recRef.current = r;
-      r.start();
-    }
-
-    if (!isRecording && recRef.current) {
-      recRef.current.stop();
-      recRef.current = null;
-    }
-  }, [isRecording, onResult]);
-
-  return { isRecording, toggleRecording };
-}
-
-/**
- * Хук для автоматического изменения высоты textarea и отслеживания высоты контейнера.
- */
-function useAutoResize<T extends HTMLElement>(ref: React.RefObject<T>) {
-  const [height, setHeight] = useState(88); // Дефолтная высота
-
-  const measureHeight = useCallback(() => {
-    const node = ref.current;
-    if (!node) return;
-    const rect = node.getBoundingClientRect();
-    setHeight(Math.max(56, Math.round(rect.height)));
-  }, [ref]);
-
+  // автопрокрутка к низу при новых сообщениях
   useEffect(() => {
-    const node = ref.current;
-    if (!node) return;
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [currentChat?.messages.length]);
 
-    const ro = new ResizeObserver(measureHeight);
-    ro.observe(node);
-
-    window.addEventListener('resize', measureHeight);
-    measureHeight(); // Первоначальное измерение
-
-    return () => {
-      ro.disconnect();
-      window.removeEventListener('resize', measureHeight);
-    };
-  }, [ref, measureHeight]);
-
-  return height;
-}
-
-
-// ---------- MAIN COMPONENT ----------
-
-export default function Chat() {
-  const {
-    chats,
-    currentChat,
-    currentId,
-    setCurrentId,
-    newChat,
-    deleteChat,
-    pushMessage,
-    pushPartial,
-  } = useChatManager();
-
-  const [input, setInput] = useState('');
-  const [sending, setSending] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [query, setQuery] = useState('');
-
-  const { isRecording, toggleRecording } = useSpeechRecognition({
-    onResult: (text) => setInput((prev) => (prev ? `${prev} ${text}` : text)),
-  });
-
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const composerRef = useRef<HTMLDivElement>(null);
-  const composerH = useAutoResize(composerRef);
-
-  // Авто-высота textarea
+  // ---------- авто-высота textarea + наблюдение за высотой композитора ----------
   useEffect(() => {
     const el = textareaRef.current;
     if (el) {
       el.style.height = '0px';
-      el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+      el.style.height = Math.min(el.scrollHeight, 200) + 'px';
     }
+    // пересчитываем высоту композитора после изменения текста
+    measureComposer();
   }, [input]);
 
-  // Автопрокрутка к низу при новых сообщениях
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [currentChat?.messages.length]);
+    // следим за изменением размера нижней панели (на случай разных экранов/клавы)
+    if (!composerRef.current) return;
+    const ro = new ResizeObserver(() => measureComposer());
+    ro.observe(composerRef.current);
+    // и на ресайз окна, чтобы не прыгало при смене ориентации
+    const onResize = () => measureComposer();
+    window.addEventListener('resize', onResize);
+    measureComposer();
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', onResize);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [composerRef.current]);
 
-  const sendMessage = useCallback(async () => {
+  function measureComposer() {
+    const node = composerRef.current;
+    if (!node) return;
+    const rect = node.getBoundingClientRect();
+    // небольшой запас (8px) и safe-area уже учтены в классах
+    setComposerH(Math.max(56, Math.round(rect.height)));
+  }
+
+  // ---------- отправка ----------
+  async function sendMessage() {
     if (!currentChat || sending) return;
     const text = input.trim();
     if (!text) return;
@@ -308,59 +138,130 @@ export default function Chat() {
           role: 'assistant',
           content: `Ошибка ответа сервера.\n\n${err || '(пусто)'}`,
         });
-      } else if (res.body) {
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let acc = '';
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          acc += decoder.decode(value, { stream: true });
-          pushPartial(currentChat.id, acc);
-        }
       } else {
-        pushMessage(currentChat.id, {
-          role: 'assistant',
-          content: 'Пустой ответ сервера.',
-        });
+        const reader = res.body?.getReader();
+        if (!reader) {
+          pushMessage(currentChat.id, {
+            role: 'assistant',
+            content: 'Пустой ответ сервера.',
+          });
+        } else {
+          let acc = '';
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            acc += new TextDecoder().decode(value);
+            pushPartial(currentChat.id, acc); // не перезаписываем пользовательское
+          }
+        }
       }
     } catch (e: any) {
       pushMessage(currentChat.id, {
         role: 'assistant',
-        content: `Ошибка сети: ${String(e?.message ?? e)}`,
+        content: `Сеть/исключение: ${String(e?.message ?? e)}`,
       });
     } finally {
       setSending(false);
       textareaRef.current?.focus();
     }
-  }, [currentChat, input, sending, pushMessage, pushPartial]);
+  }
 
-  const onKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-      e.preventDefault();
-      sendMessage();
-    }
-  }, [sendMessage]);
+  // ---------- мутации чата ----------
+  function touchChat(id: string, updater: (c: Chat) => Chat) {
+    setChats((arr) =>
+      arr
+        .map((c) => (c.id === id ? updater({ ...c }) : c))
+        .map((c) => (c.id === id ? { ...c, updatedAt: Date.now() } : c))
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+    );
+  }
 
-  const handleNewChat = () => {
-    newChat();
+  function pushMessage(id: string, msg: Msg) {
+    touchChat(id, (c) => ({ ...c, messages: [...c.messages, msg] }));
+  }
+
+  function pushPartial(id: string, text: string) {
+    touchChat(id, (c) => {
+      const last = c.messages[c.messages.length - 1];
+      if (!last || last.role !== 'assistant') {
+        return { ...c, messages: [...c.messages, { role: 'assistant', content: text }] };
+      }
+      const updated = [...c.messages];
+      updated[updated.length - 1] = { ...last, content: text };
+      return { ...c, messages: updated };
+    });
+  }
+
+  function newChat() {
+    const nc = emptyChat();
+    setChats((arr) => [nc, ...arr]);
+    setCurrentId(nc.id);
     setInput('');
     textareaRef.current?.focus();
   }
 
-  const filteredChats = useMemo(() =>
-    chats.filter((c) =>
-      (c.title || 'Новый чат').toLowerCase().includes(query.toLowerCase())
-    ), [chats, query]);
+  function deleteChat(id: string) {
+    setChats((arr) => {
+      const filtered = arr.filter((c) => c.id !== id);
+      if (filtered.length === 0) {
+        const nc = emptyChat();
+        setCurrentId(nc.id);
+        return [nc];
+      }
+      if (currentId === id) setCurrentId(filtered[0].id);
+      return filtered;
+    });
+  }
 
+  // ---------- микрофон ----------
+  function toggleRec() {
+    setRecOn((on) => !on);
+  }
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const SR: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) return;
+    if (recOn && !recRef.current) {
+      const r = new SR();
+      r.continuous = true;
+      r.interimResults = true;
+      r.lang = 'ru-RU';
+      r.onresult = (e: any) => {
+        let final = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const chunk = e.results[i][0].transcript;
+          if (e.results[i].isFinal) final += chunk;
+        }
+        if (final) setInput((prev) => (prev ? prev + ' ' + final : final));
+      };
+      r.onend = () => {
+        setRecOn(false);
+        recRef.current = null;
+      };
+      recRef.current = r;
+      r.start();
+    }
+    if (!recOn && recRef.current) {
+      recRef.current.stop();
+      recRef.current = null;
+    }
+  }, [recOn]);
+
+  // ---------- UI ----------
   const showGreeting = (currentChat?.messages.length ?? 0) === 0;
+  const filteredChats = chats.filter((c) =>
+    (c.title || 'Новый чат').toLowerCase().includes(query.toLowerCase())
+  );
+
   const mainClasses = clsx(
     'flex-1 min-w-0 flex flex-col bg-bg transition-[margin] duration-200',
-    { 'md:ml-72': sidebarOpen }
+    { 'md:ml-72': sidebarOpen } // на десктопе при открытом меню контент сдвигаем
   );
 
   return (
     <div className="relative min-h-[100dvh]">
+      {/* Мобильный бекдроп для закрытия меню тапом */}
       {sidebarOpen && (
         <div
           className="fixed inset-0 z-30 bg-black/40 md:hidden"
@@ -369,6 +270,7 @@ export default function Chat() {
         />
       )}
 
+      {/* Плавающая кнопка гамбургера (когда меню скрыто) */}
       {!sidebarOpen && (
         <button
           className="fab-menu"
@@ -380,6 +282,7 @@ export default function Chat() {
         </button>
       )}
 
+      {/* Сайдбар */}
       <aside
         className={clsx(
           'fixed inset-y-0 left-0 z-40 w-72 border-r border-border bg-panel transform transition-transform duration-200',
@@ -387,75 +290,83 @@ export default function Chat() {
         )}
         aria-hidden={!sidebarOpen}
       >
-        <div className="flex flex-col h-full">
-          <div className="flex items-center justify-between p-3 border-b border-border">
-            <div className="font-semibold">Диалоги</div>
-            <button
-              className="p-2 rounded hover:bg-panelAlt"
-              onClick={() => setSidebarOpen(false)}
-              title="Скрыть"
-              aria-label="Скрыть меню"
-            >
-              <Menu size={18} />
-            </button>
+        <div className="flex items-center justify-between p-3 border-b border-border">
+          <div className="font-semibold">Диалоги</div>
+          <button
+            className="p-2 rounded hover:bg-panelAlt"
+            onClick={() => setSidebarOpen(false)}
+            title="Скрыть"
+            aria-label="Скрыть меню"
+          >
+            <Menu size={18} />
+          </button>
+        </div>
+
+        <div className="p-3 space-y-3">
+          <button
+            onClick={newChat}
+            className="w-full inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-200 text-zinc-900 hover:opacity-90"
+          >
+            <Plus size={16} />
+            Новый чат
+          </button>
+
+          <div className="relative">
+            <Search className="absolute left-3 top-2.5" size={16} />
+            <input
+              className="w-full pl-9 pr-3 py-2 rounded-lg border border-border bg-panelAlt outline-none focus:ring-1 focus:ring-zinc-600"
+              placeholder="Поиск по чатам…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
           </div>
 
-          <div className="p-3">
-            <button
-              onClick={handleNewChat}
-              className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-zinc-200 text-zinc-900 hover:opacity-90"
-            >
-              <Plus size={16} />
-              Новый чат
-            </button>
+          <div className="flex items-center gap-2 text-sm text-subtext">
+            <Clock size={16} /> Недавние
           </div>
 
-          <div className="px-3 pb-3">
-            <div className="relative">
-              <Search className="absolute left-3 top-2.5 text-subtext" size={16} />
-              <input
-                className="w-full pl-9 pr-3 py-2 rounded-lg border border-border bg-panelAlt outline-none focus:ring-1 focus:ring-zinc-600"
-                placeholder="Поиск по чатам…"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-              />
-            </div>
-          </div>
-
-          <div className="flex-1 overflow-y-auto px-3 space-y-1">
-             <div className="flex items-center gap-2 text-sm text-subtext mb-2">
-               <Clock size={16} /> Недавние
-             </div>
+          <div className="space-y-1">
             {filteredChats.map((c) => (
               <div
                 key={c.id}
                 className={clsx(
-                  'w-full p-3 rounded-lg hover:bg-panelAlt cursor-pointer group',
+                  'w-full px-3 py-2 rounded-lg hover:bg-panelAlt cursor-pointer',
                   currentId === c.id && 'bg-panelAlt'
                 )}
-                onClick={() => setCurrentId(c.id)}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <div className="flex-1 text-left truncate">{c.title || 'Новый чат'}</div>
                   <button
-                    className="p-1 rounded text-subtext hover:bg-zinc-800 hover:text-zinc-200 opacity-0 group-hover:opacity-100 transition-opacity"
-                    onClick={(e) => { e.stopPropagation(); deleteChat(c.id); }}
+                    className="flex-1 text-left truncate"
+                    onClick={() => setCurrentId(c.id)}
+                    title="Открыть чат"
+                  >
+                    {c.title || 'Новый чат'}
+                  </button>
+                  <button
+                    className="p-1 rounded hover:bg-zinc-800"
+                    onClick={() => deleteChat(c.id)}
                     title="Удалить чат"
                     aria-label="Удалить чат"
                   >
                     <Trash2 size={14} />
                   </button>
                 </div>
-                <div className="text-xs text-subtext truncate mt-1">
+                <div className="text-xs text-subtext truncate">
                   {c.messages[c.messages.length - 1]?.content || 'Пусто'}
                 </div>
               </div>
             ))}
           </div>
+
+          <div className="flex items-center gap-2 text-sm text-subtext pt-2 border-t border-border">
+            <List size={16} /> Все чаты
+          </div>
         </div>
       </aside>
 
+      {/* Основная панель */}
       <main className={mainClasses}>
+        {/* Верхняя линия (всегда на всю ширину) */}
         <header className="safe-top flex items-center gap-2 px-4 py-3 border-b border-border">
           <button
             className="p-2 rounded hover:bg-panelAlt"
@@ -465,37 +376,42 @@ export default function Chat() {
           >
             <Menu size={18} />
           </button>
-          <h1 className="text-lg font-semibold truncate">{currentChat?.title || 'AI Assistant Chat'}</h1>
+          <h1 className="text-lg font-semibold">AI Assistant Chat</h1>
         </header>
 
+        {/* Сообщения: отдельная прокрутка, нижний паддинг = высоте композитора */}
         <div
           className="flex-1 overflow-y-auto p-4"
-          style={{ paddingBottom: composerH + 16 }}
+          style={{ paddingBottom: composerH + 16 }} // +16px запас
         >
+          {/* Приветственный экран */}
+          {showGreeting && (
+            <div className="max-w-3xl mx-auto mt-10 text-center animate-fadeIn">
+              <h2 className="text-3xl font-semibold mb-2">Здравствуйте, чем могу помочь сегодня?</h2>
+              <p className="text-subtext">Введите вопрос ниже — и начнём.</p>
+            </div>
+          )}
+
+          {/* Сообщения */}
           <div className="max-w-3xl mx-auto">
-            {showGreeting && (
-              <div className="mt-10 text-center animate-fadeIn">
-                <h2 className="text-3xl font-semibold mb-2">Здравствуйте, чем могу помочь?</h2>
-                <p className="text-subtext">Введите вопрос ниже, чтобы начать диалог.</p>
-              </div>
-            )}
             {currentChat?.messages.map((m, i) => (
-              <div key={i} className={clsx('group mb-4', m.role === 'user' && 'flex justify-end')}>
+              <div key={i} className={clsx('group mb-4 max-w-3xl', m.role === 'user' && 'ml-auto')}>
                 <div className={clsx('msg', m.role === 'user' ? 'msg-user' : 'msg-assistant')}>
                   {m.role === 'assistant' ? (
                     <Markdown>{m.content}</Markdown>
                   ) : (
                     <div className="whitespace-pre-wrap">{m.content}</div>
                   )}
-                  <div className="msg-actions">
-                    <button
-                      className="inline-flex items-center gap-1 hover:text-zinc-200"
-                      onClick={() => copyToClipboard(m.content)}
-                      title="Скопировать"
-                    >
-                      <Copy size={14} />
-                    </button>
-                  </div>
+                </div>
+                <div className="msg-actions flex items-center gap-3">
+                  <button
+                    className="inline-flex items-center gap-1 hover:text-zinc-200"
+                    onClick={() => copyToClipboard(m.content)}
+                    title="Скопировать"
+                    aria-label="Скопировать сообщение"
+                  >
+                    <Copy size={14} /> Скопировать
+                  </button>
                 </div>
               </div>
             ))}
@@ -504,20 +420,22 @@ export default function Chat() {
         </div>
       </main>
 
+      {/* НИЖНЯЯ ПАНЕЛЬ: ФИКСИРОВАНА СНИЗУ (не двигается и не исчезает) */}
       <div
         ref={composerRef}
-        className="safe-bottom fixed inset-x-0 bottom-0 z-20 border-t border-border bg-panel"
+        className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-border bg-panel"
       >
         <div className="max-w-3xl mx-auto p-3">
           <div className="flex items-end gap-2">
             <button
-              className={clsx('icon-btn', isRecording && 'bg-panelAlt text-red-500')}
-              onClick={toggleRecording}
+              className={clsx('icon-btn', recOn && 'bg-panelAlt')}
+              onClick={toggleRec}
               title="Микрофон"
+              aria-label="Микрофон"
             >
               <Mic size={18} />
             </button>
-            <button className="icon-btn" title="Прикрепить файл (не работает)">
+            <button className="icon-btn" title="Прикрепить" aria-label="Прикрепить">
               <Paperclip size={18} />
             </button>
 
@@ -538,6 +456,7 @@ export default function Chat() {
               onClick={sendMessage}
               disabled={sending || !input.trim()}
               title="Отправить"
+              aria-label="Отправить"
             >
               <Send size={18} />
             </button>
@@ -546,4 +465,24 @@ export default function Chat() {
       </div>
     </div>
   );
+
+  // ---------- helpers ----------
+  async function copyToClipboard(content: string) {
+    try { await navigator.clipboard.writeText(content); } catch {}
+  }
+
+  function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      sendMessage();
+    }
+  }
+
+  function emptyChat(): Chat {
+    return { id: genId(), title: 'Новый чат', messages: [], updatedAt: Date.now() };
+  }
+}
+
+async function safeText(res: Response) {
+  try { return await res.text(); } catch { return ''; }
 }
