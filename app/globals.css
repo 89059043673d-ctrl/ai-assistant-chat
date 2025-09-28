@@ -1,59 +1,9 @@
-@import 'katex/dist/katex.min.css';
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/**** Chat tweaks ****/
+html, body, :root { height: 100%; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 6px; }
+::-webkit-scrollbar-track { background: #18181b; }
 
-/* Гладкая прокрутка и цвет фона по теме */
-:root {
-  color-scheme: light dark;
-}
-html, body {
-  height: 100%;
-}
-body {
-  @apply bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100;
-}
-
-/* Устраняем «подпрыгивание» на iOS возле нижней панели */
-@supports (padding: max(0px)) {
-  .safe-bottom {
-    padding-bottom: max(12px, env(safe-area-inset-bottom));
-  }
-}
-
-/* Скрыть дефолтные полосы на мобильных */
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-::-webkit-scrollbar-thumb {
-  background: rgba(120, 120, 120, .3);
-  border-radius: 8px;
-}
-
-/* Текстовое поле без лишних отступов */
-textarea {
-  line-height: 1.4;
-}
-/* Markdown/KaTeX под тёмную тему */
-.prose {
-  color: inherit;
-}
-.prose h1, .prose h2, .prose h3 { color: #fff; }
-.prose p { margin: 0.4rem 0; }
-.prose ul, .prose ol { margin: 0.4rem 0; }
-.prose strong { font-weight: 700; }
-.katex { font-size: 1.02em; }
-/* Читать текст в инпутах/поиске на тёмной теме */
-input[type="text"],
-input[type="search"],
-textarea {
-  color: #fff;
-  caret-color: #fff;
-}
-
-input::placeholder,
-input[type="search"]::placeholder,
-textarea::placeholder {
-  color: rgba(255, 255, 255, 0.6);
-}
+/* KaTeX немного светлее на тёмном фоне */
+.katex-display { margin: 0.5rem 0 1rem 0; }
+.katex { color: #e4e4e7; }

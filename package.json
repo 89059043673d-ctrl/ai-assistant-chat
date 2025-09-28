@@ -9,17 +9,18 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "react-markdown": "^9.0.1",
-    "remark-gfm": "^4.0.0",
-    "remark-math": "^6.0.0",
-    "rehype-katex": "^7.0.0",
-    "katex": "^0.16.9",   
     "next": "14.2.10",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "openai": "^4.0.0",
     "lucide-react": "^0.447.0",
-    "clsx": "^2.1.1"
+    "clsx": "^2.1.1",
+    "react-markdown": "^9.0.1",
+    "remark-gfm": "^4.0.0",
+    "remark-math": "^6.0.0",
+    "rehype-katex": "^7.0.0",
+    "katex": "^0.16.11",
+    "remark-breaks": "^3.0.2"
   },
   "devDependencies": {
     "typescript": "^5.6.2",
