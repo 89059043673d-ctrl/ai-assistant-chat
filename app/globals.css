@@ -2,6 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
+/* KaTeX для формул */
+@import 'katex/dist/katex.min.css';
+
 /* Базовая тёмная тема */
 :root { color-scheme: dark; }
 html, body, #__next { height: 100%; }
@@ -30,4 +33,9 @@ body {
 /* Кнопки действий сообщения (копировать) */
 .msg-actions {
   @apply opacity-0 group-hover:opacity-100 transition-opacity duration-150 mt-1 text-xs text-zinc-400;
+}
+
+/* Плавающая кнопка гамбургера, когда сайдбар скрыт */
+.fab-menu {
+  @apply fixed top-4 left-4 z-50 p-3 rounded-full border border-border bg-panel/90 backdrop-blur hover:bg-panelAlt transition-colors;
 }
