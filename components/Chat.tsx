@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import clsx from 'clsx';
 import Markdown from './Markdown';
 import {
   Copy, Mic, Paperclip, Send, Trash2, Plus, Menu, Search, Clock, List,
@@ -71,6 +72,14 @@ export default function Chat() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [currentChat?.messages.length]);
+
+  // ---------- авто-высота textarea (удобно на телефонах) ----------
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = '0px';
+    el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+  }, [input]);
 
   // ---------- отправка ----------
   async function sendMessage() {
@@ -213,9 +222,23 @@ export default function Chat() {
     (c.title || 'Новый чат').toLowerCase().includes(query.toLowerCase())
   );
 
+  const mainClasses = clsx(
+    'flex-1 min-w-0 flex flex-col bg-bg transition-[margin] duration-200',
+    { 'md:ml-72': sidebarOpen } // на десктопе при открытом меню контент сдвигаем
+  );
+
   return (
-    <div className="flex h-dvh">
-      {/* Плавающая кнопка гамбургера, если сайдбар скрыт */}
+    <div className="relative h-dvh">
+      {/* Мобильный бекдроп для закрытия меню тапом */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-black/40 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+          aria-hidden
+        />
+      )}
+
+      {/* Плавающая кнопка гамбургера (когда меню скрыто) */}
       {!sidebarOpen && (
         <button
           className="fab-menu"
@@ -227,11 +250,13 @@ export default function Chat() {
         </button>
       )}
 
-      {/* Сайдбар */}
+      {/* Сайдбар: фиксированный оверлей, не ломает ширину хедера/футера */}
       <aside
-        className={`border-r border-border bg-panel w-72 shrink-0 transition-transform duration-200 ${
-          sidebarOpen ? 'translate-x-0' : '-translate-x-72'
-        }`}
+        className={clsx(
+          'fixed inset-y-0 left-0 z-40 w-72 border-r border-border bg-panel transform transition-transform duration-200',
+          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+        )}
+        aria-hidden={!sidebarOpen}
       >
         <div className="flex items-center justify-between p-3 border-b border-border">
           <div className="font-semibold">Диалоги</div>
@@ -272,9 +297,10 @@ export default function Chat() {
             {filteredChats.map((c) => (
               <div
                 key={c.id}
-                className={`w-full px-3 py-2 rounded-lg hover:bg-panelAlt cursor-pointer ${
-                  currentId === c.id ? 'bg-panelAlt' : ''
-                }`}
+                className={clsx(
+                  'w-full px-3 py-2 rounded-lg hover:bg-panelAlt cursor-pointer',
+                  currentId === c.id && 'bg-panelAlt'
+                )}
               >
                 <div className="flex items-center justify-between gap-2">
                   <button
@@ -307,9 +333,9 @@ export default function Chat() {
       </aside>
 
       {/* Основная панель */}
-      <main className="flex-1 min-w-0 flex flex-col bg-bg">
-        {/* Верхняя линия с гамбургером (всегда видна при узком экране) */}
-        <header className="flex items-center gap-2 px-4 py-3 border-b border-border">
+      <main className={mainClasses}>
+        {/* Верхняя линия (всегда на всю ширину) */}
+        <header className={clsx('safe-top flex items-center gap-2 px-4 py-3 border-b border-border')}>
           <button
             className="p-2 rounded hover:bg-panelAlt"
             onClick={() => setSidebarOpen((s) => !s)}
@@ -334,8 +360,8 @@ export default function Chat() {
           {/* Сообщения */}
           <div className="max-w-3xl mx-auto">
             {currentChat?.messages.map((m, i) => (
-              <div key={i} className={`group mb-4 ${m.role === 'user' ? 'ml-auto' : ''} max-w-3xl`}>
-                <div className={`msg ${m.role === 'user' ? 'msg-user' : 'msg-assistant'}`}>
+              <div key={i} className={clsx('group mb-4 max-w-3xl', m.role === 'user' && 'ml-auto')}>
+                <div className={clsx('msg', m.role === 'user' ? 'msg-user' : 'msg-assistant')}>
                   {m.role === 'assistant' ? (
                     <Markdown>{m.content}</Markdown>
                   ) : (
@@ -358,11 +384,11 @@ export default function Chat() {
           </div>
         </div>
 
-        {/* Нижняя панель ввода */}
-        <footer className="border-t border-border p-3 bg-panel">
+        {/* Нижняя панель ввода (на всю ширину, safe-area) */}
+        <footer className="border-t border-border p-3 bg-panel safe-bottom">
           <div className="max-w-3xl mx-auto flex items-end gap-2">
             <button
-              className={`icon-btn ${recOn ? 'bg-panelAlt' : ''}`}
+              className={clsx('icon-btn', recOn && 'bg-panelAlt')}
               onClick={toggleRec}
               title="Микрофон"
               aria-label="Микрофон"
@@ -376,7 +402,7 @@ export default function Chat() {
             <div className="flex-1">
               <textarea
                 ref={textareaRef}
-                className="w-full resize-none rounded-xl border border-border bg-panelAlt p-3 outline-none focus:ring-1 focus:ring-zinc-600"
+                className="w-full max-h-52 resize-none rounded-xl border border-border bg-panelAlt p-3 outline-none focus:ring-1 focus:ring-zinc-600"
                 rows={1}
                 placeholder="Напишите сообщение…"
                 value={input}
@@ -395,7 +421,7 @@ export default function Chat() {
               <Send size={18} />
             </button>
           </div>
-          {/* НИЖНЮЮ КНОПКУ «ОЧИСТИТЬ ЧАТ» УДАЛИЛ */}
+          {/* Никаких лишних кнопок снизу */}
         </footer>
       </main>
     </div>
