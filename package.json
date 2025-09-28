@@ -22,6 +22,17 @@
     "katex": "^0.16.11",
     "remark-breaks": "^3.0.2"
   },
+  "optionalDependencies": {
+    "@next/swc-darwin-arm64": "14.2.10",
+    "@next/swc-darwin-x64": "14.2.10",
+    "@next/swc-linux-arm64-gnu": "14.2.10",
+    "@next/swc-linux-arm64-musl": "14.2.10",
+    "@next/swc-linux-x64-gnu": "14.2.10",
+    "@next/swc-linux-x64-musl": "14.2.10",
+    "@next/swc-win32-arm64-msvc": "14.2.10",
+    "@next/swc-win32-ia32-msvc": "14.2.10",
+    "@next/swc-win32-x64-msvc": "14.2.10"
+  },
   "devDependencies": {
     "typescript": "^5.6.2",
     "@types/node": "^22.5.0",
@@ -32,5 +43,8 @@
     "autoprefixer": "^10.4.20",
     "eslint": "^8.57.0",
     "eslint-config-next": "14.2.10"
+  },
+  "engines": {
+    "node": ">=18.18.0"
   }
 }
