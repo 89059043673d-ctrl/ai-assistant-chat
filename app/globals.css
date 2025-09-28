@@ -1,9 +1,33 @@
-/**** Chat tweaks ****/
-html, body, :root { height: 100%; }
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 6px; }
-::-webkit-scrollbar-track { background: #18181b; }
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-/* KaTeX немного светлее на тёмном фоне */
-.katex-display { margin: 0.5rem 0 1rem 0; }
-.katex { color: #e4e4e7; }
+/* Базовая тёмная тема */
+:root { color-scheme: dark; }
+html, body, #__next { height: 100%; }
+
+body {
+  @apply bg-bg text-text;
+}
+
+/* Скроллбар */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb { background: #2a2a2e; border-radius: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+/* Плавные ховеры для иконок */
+.icon-btn {
+  @apply p-2 rounded-lg border border-border bg-panel hover:bg-panelAlt transition-colors duration-150;
+}
+
+/* Пузырь сообщения */
+.msg {
+  @apply rounded-2xl px-4 py-3 shadow-soft animate-pop;
+}
+.msg-user { @apply bg-panel text-text; }
+.msg-assistant { @apply bg-zinc-100 text-zinc-900; }
+
+/* Кнопки действий сообщения (копировать) */
+.msg-actions {
+  @apply opacity-0 group-hover:opacity-100 transition-opacity duration-150 mt-1 text-xs text-zinc-400;
+}
