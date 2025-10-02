@@ -10,6 +10,11 @@ const N8N_WEBHOOK_URL =
 
 const N8N_API_KEY = process.env.N8N_API_KEY || '';
 
+// Унифицированное сообщение для пользователя при сбое n8n
+const DOWN_MSG =
+  '⚠️ Временные неполадки: сценарий обработки сейчас недоступен. ' +
+  'Попробуйте ещё раз через 1–2 минуты. Если ошибка повторяется — напишите нам.';
+
 type Msg = { role: 'system' | 'user' | 'assistant'; content: string };
 
 export async function POST(req: NextRequest) {
@@ -49,8 +54,8 @@ export async function POST(req: NextRequest) {
     try { data = raw ? JSON.parse(raw) : null; } catch { /* оставим raw */ }
 
     if (!res.ok) {
-      const msg = `n8n HTTP ${res.status} ${res.statusText} — ${raw || '(пусто)'}`;
-      return new Response(`Сервис временно недоступен. Попробуйте позже. [${msg}]`, {
+      // Честно говорим пользователю, но без техподробностей
+      return new Response(DOWN_MSG, {
         status: 503,
         headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' },
       });
@@ -60,9 +65,9 @@ export async function POST(req: NextRequest) {
     return new Response(String(answer || '').trim(), {
       headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' },
     });
-  } catch (e: any) {
-    const msg = `Сбой обращения к n8n: ${e?.message || e}`;
-    return new Response(`Сервис временно недоступен. Попробуйте позже. [${msg}]`, {
+  } catch {
+    // Любая ошибка (таймаут, сеть, парсинг, выключенный воркфлоу) — единое сообщение
+    return new Response(DOWN_MSG, {
       status: 503,
       headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' },
     });
