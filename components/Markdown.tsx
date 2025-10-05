@@ -6,6 +6,8 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkMath from "remark-math";
 import remarkGfm from "remark-gfm";
 import rehypeKatex from "rehype-katex";
+// Убедись, что CSS KaTeX подключён глобально (в globals.css):
+// @import "katex/dist/katex.min.css";
 
 type Props = { children: string };
 
@@ -49,19 +51,20 @@ const components: Components = {
     <td className="px-3 py-2 border border-border/50 align-top" {...props} />
   ),
 
-  // --- КОД ---
-  code({ inline, className, children, ...props }) {
-    const txt = String(children);
+  // --- КОД (типобезопасно и без падений сборки) ---
+  code: (props: any) => {
+    const { inline, className, children, ...rest } = props || {};
+    const txt = String(children ?? "");
     if (inline) {
       return (
-        <code className="px-1 py-0.5 rounded bg-muted/50" {...props}>
+        <code className="px-1 py-0.5 rounded bg-muted/50" {...rest}>
           {txt}
         </code>
       );
     }
     return (
       <pre className="my-3 rounded bg-muted/50 p-3 overflow-x-auto">
-        <code className={className} {...props}>
+        <code className={className} {...rest}>
           {txt}
         </code>
       </pre>
@@ -72,8 +75,8 @@ const components: Components = {
 export default function Markdown({ children }: Props) {
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkMath, remarkGfm]}
-      rehypePlugins={[rehypeKatex]}
+      remarkPlugins={[remarkMath, remarkGfm]}  // формулы + таблицы GFM
+      rehypePlugins={[rehypeKatex]}            // KaTeX рендер
       components={components}
     >
       {children}
