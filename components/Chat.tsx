@@ -1,130 +1,488 @@
-"use client";
+'use client';
 
-import React, { useEffect, useRef, useState } from "react";
-import Markdown from "./Markdown";
+import { useEffect, useMemo, useRef, useState } from 'react';
+import clsx from 'clsx';
+import Markdown from './Markdown';
+import {
+  Copy, Mic, Paperclip, Send, Trash2, Plus, Menu, Search, Clock, List,
+} from 'lucide-react';
 
-export type Message = {
-  id: string;
-  role: "user" | "assistant" | "system";
-  content: string;
-};
+type Role = 'user' | 'assistant';
+type Msg = { role: Role; content: string };
+type Chat = { id: string; title: string; messages: Msg[]; updatedAt: number };
 
-type ChatProps = {
-  messages: Message[];
-  onSend?: (text: string) => void;
-  loading?: boolean;
-  placeholder?: string;
-  /** Показать приветственный экран, если сообщений нет */
-  showWelcome?: boolean;
-};
+const STORAGE_KEY = 'chats_v2';
 
-export default function Chat({
-  messages,
-  onSend,
-  loading = false,
-  placeholder = "Введите сообщение…",
-  showWelcome = true,
-}: ChatProps) {
-  const [input, setInput] = useState("");
-  const scrollerRef = useRef<HTMLDivElement | null>(null);
+const genId = () =>
+  (typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2) + Date.now().toString(36));
 
-  // Автоскролл вниз при новых сообщениях
+export default function Chat() {
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [currentId, setCurrentId] = useState<string | null>(null);
+  const [input, setInput] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [recOn, setRecOn] = useState(false);
+  const [query, setQuery] = useState('');
+
+  // высота композитора (нижней панели) — чтобы отступить сообщения и не перекрывать их
+  const [composerH, setComposerH] = useState<number>(88); // дефолтно ~88px
+
+  const currentChat = useMemo(
+    () => chats.find((c) => c.id === currentId) || null,
+    [chats, currentId]
+  );
+
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const recRef = useRef<any>(null);
+  const composerRef = useRef<HTMLDivElement | null>(null);
+
+  // ---------- загрузка/сохранение ----------
   useEffect(() => {
-    const el = scrollerRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [messages, loading]);
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) {
+        const init = emptyChat();
+        setChats([init]);
+        setCurrentId(init.id);
+        return;
+      }
+      const parsed: Chat[] = JSON.parse(raw);
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        const init = emptyChat();
+        setChats([init]);
+        setCurrentId(init.id);
+      } else {
+        const ordered = parsed.sort((a, b) => b.updatedAt - a.updatedAt);
+        setChats(ordered);
+        setCurrentId(ordered[0].id);
+      }
+    } catch {
+      const init = emptyChat();
+      setChats([init]);
+      setCurrentId(init.id);
+    }
+  }, []);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(chats));
+    } catch {}
+  }, [chats]);
+
+  // автопрокрутка к низу при новых сообщениях
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [currentChat?.messages.length]);
+
+  // ---------- авто-высота textarea + наблюдение за высотой композитора ----------
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (el) {
+      el.style.height = '0px';
+      el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+    }
+    // пересчитываем высоту композитора после изменения текста
+    measureComposer();
+  }, [input]);
+
+  useEffect(() => {
+    // следим за изменением размера нижней панели (на случай разных экранов/клавы)
+    if (!composerRef.current) return;
+    const ro = new ResizeObserver(() => measureComposer());
+    ro.observe(composerRef.current);
+    // и на ресайз окна, чтобы не прыгало при смене ориентации
+    const onResize = () => measureComposer();
+    window.addEventListener('resize', onResize);
+    measureComposer();
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', onResize);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [composerRef.current]);
+
+  function measureComposer() {
+    const node = composerRef.current;
+    if (!node) return;
+    const rect = node.getBoundingClientRect();
+    // небольшой запас (8px) и safe-area уже учтены в классах
+    setComposerH(Math.max(56, Math.round(rect.height)));
+  }
+
+  // ---------- отправка ----------
+  async function sendMessage() {
+    if (!currentChat || sending) return;
     const text = input.trim();
     if (!text) return;
-    onSend?.(text);
-    setInput("");
-  };
 
-  // базовые классы «пузыря» сообщения
-  const baseBubble =
-    "overflow-x-auto rounded-2xl p-4 shadow border border-zinc-200/60 dark:border-zinc-700/60 bg-white/95 dark:bg-zinc-800/60";
-  const userMod =
-    "bg-blue-50/70 dark:bg-blue-950/20 border-blue-200/70 dark:border-blue-800/60";
+    setSending(true);
+    setInput('');
+
+    const userMsg: Msg = { role: 'user', content: text };
+    pushMessage(currentChat.id, userMsg);
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: [...currentChat.messages, userMsg] }),
+      });
+
+      if (!res.ok) {
+        const err = await safeText(res);
+        pushMessage(currentChat.id, {
+          role: 'assistant',
+          content: `Ошибка ответа сервера.\n\n${err || '(пусто)'}`,
+        });
+      } else {
+        const reader = res.body?.getReader();
+        if (!reader) {
+          pushMessage(currentChat.id, {
+            role: 'assistant',
+            content: 'Пустой ответ сервера.',
+          });
+        } else {
+          let acc = '';
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            acc += new TextDecoder().decode(value);
+            pushPartial(currentChat.id, acc); // не перезаписываем пользовательское
+          }
+        }
+      }
+    } catch (e: any) {
+      pushMessage(currentChat.id, {
+        role: 'assistant',
+        content: `Сеть/исключение: ${String(e?.message ?? e)}`,
+      });
+    } finally {
+      setSending(false);
+      textareaRef.current?.focus();
+    }
+  }
+
+  // ---------- мутации чата ----------
+  function touchChat(id: string, updater: (c: Chat) => Chat) {
+    setChats((arr) =>
+      arr
+        .map((c) => (c.id === id ? updater({ ...c }) : c))
+        .map((c) => (c.id === id ? { ...c, updatedAt: Date.now() } : c))
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+    );
+  }
+
+  function pushMessage(id: string, msg: Msg) {
+    touchChat(id, (c) => ({ ...c, messages: [...c.messages, msg] }));
+  }
+
+  function pushPartial(id: string, text: string) {
+    touchChat(id, (c) => {
+      const last = c.messages[c.messages.length - 1];
+      if (!last || last.role !== 'assistant') {
+        return { ...c, messages: [...c.messages, { role: 'assistant', content: text }] };
+      }
+      const updated = [...c.messages];
+      updated[updated.length - 1] = { ...last, content: text };
+      return { ...c, messages: updated };
+    });
+  }
+
+  function newChat() {
+    const nc = emptyChat();
+    setChats((arr) => [nc, ...arr]);
+    setCurrentId(nc.id);
+    setInput('');
+    textareaRef.current?.focus();
+  }
+
+  function deleteChat(id: string) {
+    setChats((arr) => {
+      const filtered = arr.filter((c) => c.id !== id);
+      if (filtered.length === 0) {
+        const nc = emptyChat();
+        setCurrentId(nc.id);
+        return [nc];
+      }
+      if (currentId === id) setCurrentId(filtered[0].id);
+      return filtered;
+    });
+  }
+
+  // ---------- микрофон ----------
+  function toggleRec() {
+    setRecOn((on) => !on);
+  }
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const SR: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) return;
+    if (recOn && !recRef.current) {
+      const r = new SR();
+      r.continuous = true;
+      r.interimResults = true;
+      r.lang = 'ru-RU';
+      r.onresult = (e: any) => {
+        let final = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const chunk = e.results[i][0].transcript;
+          if (e.results[i].isFinal) final += chunk;
+        }
+        if (final) setInput((prev) => (prev ? prev + ' ' + final : final));
+      };
+      r.onend = () => {
+        setRecOn(false);
+        recRef.current = null;
+      };
+      recRef.current = r;
+      r.start();
+    }
+    if (!recOn && recRef.current) {
+      recRef.current.stop();
+      recRef.current = null;
+    }
+  }, [recOn]);
+
+  // ---------- UI ----------
+  const showGreeting = (currentChat?.messages.length ?? 0) === 0;
+  const filteredChats = chats.filter((c) =>
+    (c.title || 'Новый чат').toLowerCase().includes(query.toLowerCase())
+  );
+
+  const mainClasses = clsx(
+    'flex-1 min-w-0 flex flex-col bg-bg transition-[margin] duration-200',
+    { 'md:ml-72': sidebarOpen } // на десктопе при открытом меню контент сдвигаем
+  );
 
   return (
-    <div className="flex min-h-[100dvh] w-full flex-col bg-black">
-      {/* Лента сообщений */}
-      <div
-        ref={scrollerRef}
-        className="flex-1 overflow-auto py-6 md:py-8"
-        style={{ WebkitOverflowScrolling: "touch" }}
+    <div className="relative min-h-[100dvh]">
+      {/* Мобильный бекдроп для закрытия меню тапом */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-black/40 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+          aria-hidden
+        />
+      )}
+
+      {/* Плавающая кнопка гамбургера (когда меню скрыто) */}
+      {!sidebarOpen && (
+        <button
+          className="fab-menu"
+          onClick={() => setSidebarOpen(true)}
+          aria-label="Открыть меню"
+          title="Меню"
+        >
+          <Menu size={18} />
+        </button>
+      )}
+
+      {/* Сайдбар */}
+      <aside
+        className={clsx(
+          'fixed inset-y-0 left-0 z-40 w-72 border-r border-border bg-panel transform transition-transform duration-200',
+          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+        )}
+        aria-hidden={!sidebarOpen}
       >
-        {/* Центральная колонка — до 95vw, но не шире 1400px */}
-        <div className="max-w-[min(1400px,95vw)] mx-auto px-3 md:px-4">
+        <div className="flex items-center justify-between p-3 border-b border-border">
+          <div className="font-semibold">Диалоги</div>
+          <button
+            className="p-2 rounded hover:bg-panelAlt"
+            onClick={() => setSidebarOpen(false)}
+            title="Скрыть"
+            aria-label="Скрыть меню"
+          >
+            <Menu size={18} />
+          </button>
+        </div>
+
+        <div className="p-3 space-y-3">
+          <button
+            onClick={newChat}
+            className="w-full inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-200 text-zinc-900 hover:opacity-90"
+          >
+            <Plus size={16} />
+            Новый чат
+          </button>
+
+          <div className="relative">
+            <Search className="absolute left-3 top-2.5" size={16} />
+            <input
+              className="w-full pl-9 pr-3 py-2 rounded-lg border border-border bg-panelAlt outline-none focus:ring-1 focus:ring-zinc-600"
+              placeholder="Поиск по чатам…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </div>
+
+          <div className="flex items-center gap-2 text-sm text-subtext">
+            <Clock size={16} /> Недавние
+          </div>
+
+          <div className="space-y-1">
+            {filteredChats.map((c) => (
+              <div
+                key={c.id}
+                className={clsx(
+                  'w-full px-3 py-2 rounded-lg hover:bg-panelAlt cursor-pointer',
+                  currentId === c.id && 'bg-panelAlt'
+                )}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    className="flex-1 text-left truncate"
+                    onClick={() => setCurrentId(c.id)}
+                    title="Открыть чат"
+                  >
+                    {c.title || 'Новый чат'}
+                  </button>
+                  <button
+                    className="p-1 rounded hover:bg-zinc-800"
+                    onClick={() => deleteChat(c.id)}
+                    title="Удалить чат"
+                    aria-label="Удалить чат"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+                <div className="text-xs text-subtext truncate">
+                  {c.messages[c.messages.length - 1]?.content || 'Пусто'}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-2 text-sm text-subtext pt-2 border-t border-border">
+            <List size={16} /> Все чаты
+          </div>
+        </div>
+      </aside>
+
+      {/* Основная панель */}
+      <main className={mainClasses}>
+        {/* Верхняя линия (всегда на всю ширину) */}
+        <header className="safe-top flex items-center gap-2 px-4 py-3 border-b border-border">
+          <button
+            className="p-2 rounded hover:bg-panelAlt"
+            onClick={() => setSidebarOpen((s) => !s)}
+            title="Меню"
+            aria-label="Меню"
+          >
+            <Menu size={18} />
+          </button>
+          <h1 className="text-lg font-semibold">AI Assistant Chat</h1>
+        </header>
+
+        {/* Сообщения: отдельная прокрутка, нижний паддинг = высоте композитора */}
+        <div
+          className="flex-1 overflow-y-auto p-4"
+          style={{ paddingBottom: composerH + 16 }} // +16px запас
+        >
           {/* Приветственный экран */}
-          {showWelcome && messages.length === 0 && (
-            <div className="max-w-[min(1400px,95vw)] mx-auto mt-10 text-center animate-fadeIn">
-              <h1 className="text-white text-2xl md:text-3xl font-semibold">
-                Привет! Это твой чат-сайт.
-              </h1>
-              <p className="text-zinc-300 mt-3">
-                Широкие таблицы прокручиваются по горизонтали и больше не
-                «пробивают» фон.
-              </p>
+          {showGreeting && (
+            <div className="max-w-3xl mx-auto mt-10 text-center animate-fadeIn">
+              <h2 className="text-3xl font-semibold mb-2">Здравствуйте, чем могу помочь сегодня?</h2>
+              <p className="text-subtext">Введите вопрос ниже — и начнём.</p>
             </div>
           )}
 
           {/* Сообщения */}
-          <div className="space-y-4">
-            {messages
-              .filter((m) => m.role !== "system")
-              .map((m) => {
-                const isUser = m.role === "user";
-                return (
-                  <div
-                    key={m.id}
-                    className={`group mb-1 ${isUser ? "ml-auto" : ""} max-w-[min(1400px,95vw)]`}
+          <div className="max-w-3xl mx-auto">
+            {currentChat?.messages.map((m, i) => (
+              <div key={i} className={clsx('group mb-4 max-w-3xl', m.role === 'user' && 'ml-auto')}>
+                <div className={clsx('msg', m.role === 'user' ? 'msg-user' : 'msg-assistant')}>
+                  {m.role === 'assistant' ? (
+                    <Markdown>{m.content}</Markdown>
+                  ) : (
+                    <div className="whitespace-pre-wrap">{m.content}</div>
+                  )}
+                </div>
+                <div className="msg-actions flex items-center gap-3">
+                  <button
+                    className="inline-flex items-center gap-1 hover:text-zinc-200"
+                    onClick={() => copyToClipboard(m.content)}
+                    title="Скопировать"
+                    aria-label="Скопировать сообщение"
                   >
-                    <div className={`${baseBubble} ${isUser ? userMod : ""}`}>
-                      <Markdown className="prose prose-zinc dark:prose-invert max-w-none">
-                        {m.content}
-                      </Markdown>
-                    </div>
-                  </div>
-                );
-              })}
+                    <Copy size={14} /> Скопировать
+                  </button>
+                </div>
+              </div>
+            ))}
+            <div ref={bottomRef} />
           </div>
         </div>
-      </div>
+      </main>
 
-      {/* Композер */}
-      <div className="sticky bottom-0 left-0 right-0 bg-gradient-to-t from-black via-black/90 to-black/40">
-        <div className="max-w-[min(1400px,95vw)] mx-auto p-3">
-          <form
-            onSubmit={handleSubmit}
-            className="flex items-end gap-2 rounded-2xl border border-zinc-700 bg-zinc-900/50 p-2"
-          >
-            <textarea
-              className="min-h-[44px] max-h-[33vh] w-full resize-y bg-transparent p-3 text-zinc-100 placeholder-zinc-500 outline-none"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder={placeholder}
-              disabled={loading}
-            />
+      {/* НИЖНЯЯ ПАНЕЛЬ: ФИКСИРОВАНА СНИЗУ (не двигается и не исчезает) */}
+      <div
+        ref={composerRef}
+        className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-border bg-panel"
+      >
+        <div className="max-w-3xl mx-auto p-3">
+          <div className="flex items-end gap-2">
             <button
-              type="submit"
-              disabled={loading || !input.trim()}
-              className="shrink-0 rounded-xl bg-blue-600 px-4 py-2 text-white disabled:opacity-50"
-              title="Отправить"
+              className={clsx('icon-btn', recOn && 'bg-panelAlt')}
+              onClick={toggleRec}
+              title="Микрофон"
+              aria-label="Микрофон"
             >
-              {loading ? "…" : "→"}
+              <Mic size={18} />
             </button>
-          </form>
+            <button className="icon-btn" title="Прикрепить" aria-label="Прикрепить">
+              <Paperclip size={18} />
+            </button>
 
-          {/* Подсказка про скролл для таблиц */}
-          <p className="mt-2 text-xs text-zinc-500">
-            Широкие таблицы можно прокручивать по горизонтали внутри сообщения.
-          </p>
+            <div className="flex-1">
+              <textarea
+                ref={textareaRef}
+                className="w-full max-h-52 resize-none rounded-xl border border-border bg-panelAlt p-3 outline-none focus:ring-1 focus:ring-zinc-600"
+                rows={1}
+                placeholder="Напишите сообщение…"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={onKeyDown}
+              />
+            </div>
+
+            <button
+              className="p-3 rounded-xl bg-zinc-200 text-zinc-900 hover:opacity-90 disabled:opacity-50 transition-opacity"
+              onClick={sendMessage}
+              disabled={sending || !input.trim()}
+              title="Отправить"
+              aria-label="Отправить"
+            >
+              <Send size={18} />
+            </button>
+          </div>
         </div>
       </div>
     </div>
   );
+
+  // ---------- helpers ----------
+  async function copyToClipboard(content: string) {
+    try { await navigator.clipboard.writeText(content); } catch {}
+  }
+
+  function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      sendMessage();
+    }
+  }
+
+  function emptyChat(): Chat {
+    return { id: genId(), title: 'Новый чат', messages: [], updatedAt: Date.now() };
+  }
+}
+
+async function safeText(res: Response) {
+  try { return await res.text(); } catch { return ''; }
 }
