@@ -34,7 +34,9 @@ const components: Components = {
 
   // --- ТАБЛИЦЫ (GFM) ---
   table: ({ node, ...props }) => (
-    <table className="w-full border-collapse my-4 text-sm" {...props} />
+    <div className="overflow-x-auto max-w-full my-4 rounded border border-border/30">
+      <table className="min-w-full border-collapse text-sm" {...props} />
+    </div>
   ),
   thead: ({ node, ...props }) => <thead className="bg-muted/40" {...props} />,
   tbody: ({ node, ...props }) => <tbody {...props} />,
