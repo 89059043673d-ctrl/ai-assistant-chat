@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 import Markdown from './Markdown';
+import AudioVisualizer from './AudioVisualizer';
 import {
-  Copy, Mic, Paperclip, Send, Trash2, Plus, Menu, Search, Clock, List,
+  Copy, Mic, Send, Trash2, Plus, Menu, Search, Clock, List,
 } from 'lucide-react';
 
 type Role = 'user' | 'assistant';
@@ -26,9 +27,10 @@ export default function Chat() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [recOn, setRecOn] = useState(false);
   const [query, setQuery] = useState('');
+  const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
+  const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
 
-  // высота композитора (нижней панели) — чтобы отступить сообщения и не перекрывать их
-  const [composerH, setComposerH] = useState<number>(88); // дефолтно ~88px
+  const [composerH, setComposerH] = useState<number>(88);
 
   const currentChat = useMemo(
     () => chats.find((c) => c.id === currentId) || null,
@@ -39,6 +41,7 @@ export default function Chat() {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const recRef = useRef<any>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
   // ---------- загрузка/сохранение ----------
   useEffect(() => {
@@ -78,23 +81,20 @@ export default function Chat() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [currentChat?.messages.length]);
 
-  // ---------- авто-высота textarea + наблюдение за высотой композитора ----------
+  // ---------- авто-высота textarea ----------
   useEffect(() => {
     const el = textareaRef.current;
     if (el) {
       el.style.height = '0px';
       el.style.height = Math.min(el.scrollHeight, 200) + 'px';
     }
-    // пересчитываем высоту композитора после изменения текста
     measureComposer();
   }, [input]);
 
   useEffect(() => {
-    // следим за изменением размера нижней панели (на случай разных экранов/клавы)
     if (!composerRef.current) return;
     const ro = new ResizeObserver(() => measureComposer());
     ro.observe(composerRef.current);
-    // и на ресайз окна, чтобы не прыгало при смене ориентации
     const onResize = () => measureComposer();
     window.addEventListener('resize', onResize);
     measureComposer();
@@ -102,14 +102,12 @@ export default function Chat() {
       ro.disconnect();
       window.removeEventListener('resize', onResize);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [composerRef.current]);
 
   function measureComposer() {
     const node = composerRef.current;
     if (!node) return;
     const rect = node.getBoundingClientRect();
-    // небольшой запас (8px) и safe-area уже учтены в классах
     setComposerH(Math.max(56, Math.round(rect.height)));
   }
 
@@ -151,7 +149,7 @@ export default function Chat() {
             const { value, done } = await reader.read();
             if (done) break;
             acc += new TextDecoder().decode(value);
-            pushPartial(currentChat.id, acc); // не перезаписываем пользовательское
+            pushPartial(currentChat.id, acc);
           }
         }
       }
@@ -213,7 +211,7 @@ export default function Chat() {
     });
   }
 
-  // ---------- микрофон ----------
+  // ---------- микрофон с эквалайзером ----------
   function toggleRec() {
     setRecOn((on) => !on);
   }
@@ -222,28 +220,56 @@ export default function Chat() {
     if (typeof window === 'undefined') return;
     const SR: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SR) return;
+
     if (recOn && !recRef.current) {
-      const r = new SR();
-      r.continuous = true;
-      r.interimResults = true;
-      r.lang = 'ru-RU';
-      r.onresult = (e: any) => {
-        let final = '';
-        for (let i = e.resultIndex; i < e.results.length; i++) {
-          const chunk = e.results[i][0].transcript;
-          if (e.results[i].isFinal) final += chunk;
-        }
-        if (final) setInput((prev) => (prev ? prev + ' ' + final : final));
-      };
-      r.onend = () => {
+      // Инициализируем AudioContext для анализа
+      const ac = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const analyserNode = ac.createAnalyser();
+      analyserNode.fftSize = 256;
+      setAudioContext(ac);
+      setAnalyser(analyserNode);
+
+      // Получаем доступ к микрофону
+      navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+        streamRef.current = stream;
+        const source = ac.createMediaStreamAudioSource(stream);
+        source.connect(analyserNode);
+        analyserNode.connect(ac.destination);
+
+        // Speech Recognition
+        const r = new SR();
+        r.continuous = true;
+        r.interimResults = true;
+        r.lang = 'ru-RU';
+        r.onresult = (e: any) => {
+          let final = '';
+          for (let i = e.resultIndex; i < e.results.length; i++) {
+            const chunk = e.results[i][0].transcript;
+            if (e.results[i].isFinal) final += chunk;
+          }
+          if (final) setInput((prev) => (prev ? prev + ' ' + final : final));
+        };
+        r.onend = () => {
+          setRecOn(false);
+          recRef.current = null;
+          if (streamRef.current) {
+            streamRef.current.getTracks().forEach((track) => track.stop());
+            streamRef.current = null;
+          }
+        };
+        r.start();
+        recRef.current = r;
+      }).catch((err) => {
+        console.error('Ошибка доступа к микрофону:', err);
         setRecOn(false);
-        recRef.current = null;
-      };
-      r.start();
-      recRef.current = r;
+      });
     } else if (!recOn && recRef.current) {
       recRef.current.stop();
       recRef.current = null;
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+      }
     }
   }, [recOn]);
 
@@ -255,7 +281,7 @@ export default function Chat() {
 
   const mainClasses = clsx(
     'flex-1 min-w-0 flex flex-col bg-bg transition-[margin] duration-200',
-    { 'md:ml-72': sidebarOpen } // на десктопе при открытом меню контент сдвигаем
+    { 'md:ml-72': sidebarOpen }
   );
 
   return (
@@ -365,7 +391,7 @@ export default function Chat() {
 
       {/* Основная панель */}
       <main className={mainClasses}>
-        {/* Верхняя линия (всегда на всю ширину) */}
+        {/* Верхняя линия */}
         <header className="safe-top flex items-center gap-2 px-4 py-3 border-b border-border">
           <button
             className="p-2 rounded hover:bg-panelAlt"
@@ -381,7 +407,7 @@ export default function Chat() {
         {/* Сообщения: отдельная прокрутка, нижний паддинг = высоте композитора */}
         <div
           className="flex-1 overflow-y-auto overflow-x-hidden p-4"
-          style={{ paddingBottom: composerH + 16 }} // +16px запас
+          style={{ paddingBottom: composerH + 16 }}
         >
           {/* Приветственный экран */}
           {showGreeting && (
@@ -419,25 +445,36 @@ export default function Chat() {
         </div>
       </main>
 
-      {/* НИЖНЯЯ ПАНЕЛЬ: ФИКСИРОВАНА СНИЗУ (не двигается и не исчезает) */}
+      {/* НИЖНЯЯ ПАНЕЛЬ */}
       <div
         ref={composerRef}
         className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-border bg-panel"
       >
         <div className="max-w-3xl mx-auto p-3">
-          <div className="flex items-end gap-2">
+          {/* Эквалайзер (если микрофон активен) */}
+          {recOn && (
+            <div className="mb-3 flex justify-center">
+              <AudioVisualizer isActive={recOn} audioContext={audioContext || undefined} analyser={analyser || undefined} />
+            </div>
+          )}
+
+          <div className="flex items-end gap-3">
+            {/* Большая кнопка микрофона слева */}
             <button
-              className={clsx('icon-btn', recOn && 'bg-panelAlt')}
+              className={clsx(
+                'p-4 rounded-xl border-2 transition-all duration-200 flex-shrink-0',
+                recOn
+                  ? 'bg-red-500 border-red-600 hover:bg-red-600 scale-110'
+                  : 'bg-panel border-border hover:bg-panelAlt'
+              )}
               onClick={toggleRec}
-              title="Микрофон"
+              title={recOn ? 'Остановить запись' : 'Начать запись'}
               aria-label="Микрофон"
             >
-              <Mic size={18} />
-            </button>
-            <button className="icon-btn" title="Прикрепить" aria-label="Прикрепить">
-              <Paperclip size={18} />
+              <Mic size={28} className={recOn ? 'text-white' : 'text-text'} />
             </button>
 
+            {/* Поле для ввода текста в центре */}
             <div className="flex-1">
               <textarea
                 ref={textareaRef}
@@ -450,14 +487,15 @@ export default function Chat() {
               />
             </div>
 
+            {/* Кнопка отправки справа */}
             <button
-              className="p-3 rounded-xl bg-zinc-200 text-zinc-900 hover:opacity-90 disabled:opacity-50 transition-opacity"
+              className="p-4 rounded-xl bg-zinc-200 text-zinc-900 hover:opacity-90 disabled:opacity-50 transition-opacity flex-shrink-0"
               onClick={sendMessage}
               disabled={sending || !input.trim()}
               title="Отправить"
               aria-label="Отправить"
             >
-              <Send size={18} />
+              <Send size={24} />
             </button>
           </div>
         </div>
