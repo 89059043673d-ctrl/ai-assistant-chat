@@ -6,8 +6,6 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkMath from "remark-math";
 import remarkGfm from "remark-gfm";
 import rehypeKatex from "rehype-katex";
-// Убедись, что CSS KaTeX подключён глобально (в globals.css):
-// @import "katex/dist/katex.min.css";
 
 type Props = { children: string };
 
@@ -32,9 +30,11 @@ const components: Components = {
   ),
   li: ({ node, ...props }) => <li className="leading-7" {...props} />,
 
-  // --- ТАБЛИЦЫ (GFM) ---
+  // ✨ ИСПРАВЛЕНО: таблицы теперь с горизонтальной прокруткой
   table: ({ node, ...props }) => (
-    <table className="w-full border-collapse my-4 text-sm" {...props} />
+    <div className="overflow-x-auto max-w-full my-4 rounded border border-border/30">
+      <table className="min-w-full border-collapse text-sm" {...props} />
+    </div>
   ),
   thead: ({ node, ...props }) => <thead className="bg-muted/40" {...props} />,
   tbody: ({ node, ...props }) => <tbody {...props} />,
@@ -51,7 +51,6 @@ const components: Components = {
     <td className="px-3 py-2 border border-border/50 align-top" {...props} />
   ),
 
-  // --- КОД (типобезопасно и без падений сборки) ---
   code: (props: any) => {
     const { inline, className, children, ...rest } = props || {};
     const txt = String(children ?? "");
@@ -75,11 +74,20 @@ const components: Components = {
 export default function Markdown({ children }: Props) {
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkMath, remarkGfm]}  // формулы + таблицы GFM
-      rehypePlugins={[rehypeKatex]}            // KaTeX рендер
+      remarkPlugins={[remarkMath, remarkGfm]}
+      rehypePlugins={[rehypeKatex]}
       components={components}
     >
       {children}
     </ReactMarkdown>
   );
 }
+```
+
+---
+
+## 🎯 КАК БЫСТРО ЗАМЕНИТЬ НА GITHUB:
+
+1. **Открой на GitHub:**
+```
+   github.com/your-username/your-repo/blob/main/components/Markdown.tsx
