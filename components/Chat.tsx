@@ -1,3 +1,4 @@
+cat > /mnt/user-data/outputs/Chat_ИСПРАВЛЕННЫЙ_С_ОТЛАДКОЙ.tsx << 'EOF'
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -42,6 +43,7 @@ export default function Chat() {
   const recRef = useRef<any>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
 
   // ---------- загрузка/сохранение ----------
   useEffect(() => {
@@ -213,63 +215,113 @@ export default function Chat() {
 
   // ---------- микрофон с эквалайзером ----------
   function toggleRec() {
+    console.log('🎤 Toggle rec, current recOn:', recOn);
     setRecOn((on) => !on);
   }
 
   useEffect(() => {
+    console.log('🎤 Mic effect, recOn:', recOn);
+    
     if (typeof window === 'undefined') return;
+    
     const SR: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) return;
+    if (!SR) {
+      console.error('❌ SpeechRecognition не поддерживается браузером');
+      return;
+    }
 
     if (recOn && !recRef.current) {
-      // Инициализируем AudioContext для анализа
-      const ac = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const analyserNode = ac.createAnalyser();
-      analyserNode.fftSize = 256;
-      setAudioContext(ac);
-      setAnalyser(analyserNode);
-
+      console.log('🎤 Запуск микрофона...');
+      
       // Получаем доступ к микрофону
-      navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
-        streamRef.current = stream;
-        const source = ac.createMediaStreamAudioSource(stream);
-        source.connect(analyserNode);
-        analyserNode.connect(ac.destination);
-
-        // Speech Recognition
-        const r = new SR();
-        r.continuous = true;
-        r.interimResults = true;
-        r.lang = 'ru-RU';
-        r.onresult = (e: any) => {
-          let final = '';
-          for (let i = e.resultIndex; i < e.results.length; i++) {
-            const chunk = e.results[i][0].transcript;
-            if (e.results[i].isFinal) final += chunk;
-          }
-          if (final) setInput((prev) => (prev ? prev + ' ' + final : final));
-        };
-        r.onend = () => {
+      navigator.mediaDevices.getUserMedia({ audio: true })
+        .then((stream) => {
+          console.log('✅ Микрофон получен:', stream);
+          streamRef.current = stream;
+          
+          // Инициализируем AudioContext
+          const ac = new (window.AudioContext || (window as any).webkitAudioContext)();
+          const analyserNode = ac.createAnalyser();
+          analyserNode.fftSize = 256;
+          
+          // Подключаем поток к анализатору
+          const source = ac.createMediaStreamAudioSource(stream);
+          sourceRef.current = source;
+          source.connect(analyserNode);
+          analyserNode.connect(ac.destination);
+          
+          setAudioContext(ac);
+          setAnalyser(analyserNode);
+          
+          console.log('✅ AudioContext инициализирован');
+          
+          // Запускаем Speech Recognition
+          const r = new SR();
+          r.continuous = true;
+          r.interimResults = true;
+          r.lang = 'ru-RU';
+          
+          r.onstart = () => {
+            console.log('✅ Speech Recognition запущен');
+          };
+          
+          r.onresult = (e: any) => {
+            console.log('📝 Результат распознавания:', e.results);
+            let final = '';
+            for (let i = e.resultIndex; i < e.results.length; i++) {
+              const chunk = e.results[i][0].transcript;
+              console.log('  └─ Транскрипт:', chunk, 'Final:', e.results[i].isFinal);
+              if (e.results[i].isFinal) {
+                final += chunk + ' ';
+              }
+            }
+            if (final) {
+              console.log('✅ Финальный текст:', final);
+              setInput((prev) => (prev ? prev + ' ' + final : final));
+            }
+          };
+          
+          r.onerror = (e: any) => {
+            console.error('❌ Ошибка Speech Recognition:', e.error);
+          };
+          
+          r.onend = () => {
+            console.log('⏹️  Speech Recognition закончился');
+            setRecOn(false);
+            recRef.current = null;
+          };
+          
+          r.start();
+          recRef.current = r;
+          console.log('✅ Speech Recognition запущен');
+        })
+        .catch((err) => {
+          console.error('❌ Ошибка доступа к микрофону:', err);
+          alert('Микрофон не доступен. Проверь разрешения браузера в настройках.');
           setRecOn(false);
-          recRef.current = null;
-          if (streamRef.current) {
-            streamRef.current.getTracks().forEach((track) => track.stop());
-            streamRef.current = null;
-          }
-        };
-        r.start();
-        recRef.current = r;
-      }).catch((err) => {
-        console.error('Ошибка доступа к микрофону:', err);
-        setRecOn(false);
-      });
+        });
     } else if (!recOn && recRef.current) {
-      recRef.current.stop();
-      recRef.current = null;
+      console.log('⏹️  Остановка микрофона...');
+      
+      if (recRef.current) {
+        recRef.current.stop();
+        recRef.current = null;
+      }
+      
       if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current.getTracks().forEach((track) => {
+          console.log('⏹️  Останавливаю трек:', track.kind);
+          track.stop();
+        });
         streamRef.current = null;
       }
+      
+      if (sourceRef.current) {
+        sourceRef.current.disconnect();
+        sourceRef.current = null;
+      }
+      
+      console.log('✅ Микрофон остановлен');
     }
   }, [recOn]);
 
@@ -523,3 +575,57 @@ export default function Chat() {
 async function safeText(res: Response) {
   try { return await res.text(); } catch { return ''; }
 }
+EOF
+cat /mnt/user-data/outputs/Chat_ИСПРАВЛЕННЫЙ_С_ОТЛАДКОЙ.tsx | head -50
+Output
+
+'use client';
+
+import { useEffect, useMemo, useRef, useState } from 'react';
+import clsx from 'clsx';
+import Markdown from './Markdown';
+import AudioVisualizer from './AudioVisualizer';
+import {
+  Copy, Mic, Send, Trash2, Plus, Menu, Search, Clock, List,
+} from 'lucide-react';
+
+type Role = 'user' | 'assistant';
+type Msg = { role: Role; content: string };
+type Chat = { id: string; title: string; messages: Msg[]; updatedAt: number };
+
+const STORAGE_KEY = 'chats_v2';
+
+const genId = () =>
+  (typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2) + Date.now().toString(36));
+
+export default function Chat() {
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [currentId, setCurrentId] = useState<string | null>(null);
+  const [input, setInput] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [recOn, setRecOn] = useState(false);
+  const [query, setQuery] = useState('');
+  const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
+  const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
+
+  const [composerH, setComposerH] = useState<number>(88);
+
+  const currentChat = useMemo(
+    () => chats.find((c) => c.id === currentId) || null,
+    [chats, currentId]
+  );
+
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const recRef = useRef<any>(null);
+  const composerRef = useRef<HTMLDivElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+
+  // ---------- загрузка/сохранение ----------
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
