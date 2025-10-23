@@ -239,10 +239,9 @@ export default function Chat() {
         setRecOn(false);
         recRef.current = null;
       };
-      recRef.current = r;
       r.start();
-    }
-    if (!recOn && recRef.current) {
+      recRef.current = r;
+    } else if (!recOn && recRef.current) {
       recRef.current.stop();
       recRef.current = null;
     }
@@ -381,7 +380,7 @@ export default function Chat() {
 
         {/* Сообщения: отдельная прокрутка, нижний паддинг = высоте композитора */}
         <div
-          className="flex-1 overflow-y-auto p-4"
+          className="flex-1 overflow-y-auto overflow-x-hidden p-4"
           style={{ paddingBottom: composerH + 16 }} // +16px запас
         >
           {/* Приветственный экран */}
