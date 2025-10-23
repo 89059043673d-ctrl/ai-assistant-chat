@@ -1,4 +1,3 @@
-cat > /mnt/user-data/outputs/Chat_ИСПРАВЛЕННЫЙ_С_ОТЛАДКОЙ.tsx << 'EOF'
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -43,9 +42,7 @@ export default function Chat() {
   const recRef = useRef<any>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
 
-  // ---------- загрузка/сохранение ----------
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -78,12 +75,10 @@ export default function Chat() {
     } catch {}
   }, [chats]);
 
-  // автопрокрутка к низу при новых сообщениях
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [currentChat?.messages.length]);
 
-  // ---------- авто-высота textarea ----------
   useEffect(() => {
     const el = textareaRef.current;
     if (el) {
@@ -113,7 +108,6 @@ export default function Chat() {
     setComposerH(Math.max(56, Math.round(rect.height)));
   }
 
-  // ---------- отправка ----------
   async function sendMessage() {
     if (!currentChat || sending) return;
     const text = input.trim();
@@ -166,7 +160,6 @@ export default function Chat() {
     }
   }
 
-  // ---------- мутации чата ----------
   function touchChat(id: string, updater: (c: Chat) => Chat) {
     setChats((arr) =>
       arr
@@ -213,119 +206,65 @@ export default function Chat() {
     });
   }
 
-  // ---------- микрофон с эквалайзером ----------
   function toggleRec() {
-    console.log('🎤 Toggle rec, current recOn:', recOn);
     setRecOn((on) => !on);
   }
 
   useEffect(() => {
-    console.log('🎤 Mic effect, recOn:', recOn);
-    
     if (typeof window === 'undefined') return;
-    
     const SR: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) {
-      console.error('❌ SpeechRecognition не поддерживается браузером');
-      return;
-    }
+    if (!SR) return;
 
     if (recOn && !recRef.current) {
-      console.log('🎤 Запуск микрофона...');
-      
-      // Получаем доступ к микрофону
+      const ac = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const analyserNode = ac.createAnalyser();
+      analyserNode.fftSize = 256;
+      setAudioContext(ac);
+      setAnalyser(analyserNode);
+
       navigator.mediaDevices.getUserMedia({ audio: true })
         .then((stream) => {
-          console.log('✅ Микрофон получен:', stream);
           streamRef.current = stream;
-          
-          // Инициализируем AudioContext
-          const ac = new (window.AudioContext || (window as any).webkitAudioContext)();
-          const analyserNode = ac.createAnalyser();
-          analyserNode.fftSize = 256;
-          
-          // Подключаем поток к анализатору
           const source = ac.createMediaStreamAudioSource(stream);
-          sourceRef.current = source;
           source.connect(analyserNode);
           analyserNode.connect(ac.destination);
-          
-          setAudioContext(ac);
-          setAnalyser(analyserNode);
-          
-          console.log('✅ AudioContext инициализирован');
-          
-          // Запускаем Speech Recognition
+
           const r = new SR();
           r.continuous = true;
           r.interimResults = true;
           r.lang = 'ru-RU';
-          
-          r.onstart = () => {
-            console.log('✅ Speech Recognition запущен');
-          };
-          
           r.onresult = (e: any) => {
-            console.log('📝 Результат распознавания:', e.results);
             let final = '';
             for (let i = e.resultIndex; i < e.results.length; i++) {
               const chunk = e.results[i][0].transcript;
-              console.log('  └─ Транскрипт:', chunk, 'Final:', e.results[i].isFinal);
-              if (e.results[i].isFinal) {
-                final += chunk + ' ';
-              }
+              if (e.results[i].isFinal) final += chunk + ' ';
             }
-            if (final) {
-              console.log('✅ Финальный текст:', final);
-              setInput((prev) => (prev ? prev + ' ' + final : final));
-            }
+            if (final) setInput((prev) => (prev ? prev + final : final));
           };
-          
-          r.onerror = (e: any) => {
-            console.error('❌ Ошибка Speech Recognition:', e.error);
-          };
-          
           r.onend = () => {
-            console.log('⏹️  Speech Recognition закончился');
             setRecOn(false);
             recRef.current = null;
+            if (streamRef.current) {
+              streamRef.current.getTracks().forEach((track) => track.stop());
+              streamRef.current = null;
+            }
           };
-          
           r.start();
           recRef.current = r;
-          console.log('✅ Speech Recognition запущен');
         })
-        .catch((err) => {
-          console.error('❌ Ошибка доступа к микрофону:', err);
-          alert('Микрофон не доступен. Проверь разрешения браузера в настройках.');
+        .catch(() => {
           setRecOn(false);
         });
     } else if (!recOn && recRef.current) {
-      console.log('⏹️  Остановка микрофона...');
-      
-      if (recRef.current) {
-        recRef.current.stop();
-        recRef.current = null;
-      }
-      
+      recRef.current.stop();
+      recRef.current = null;
       if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => {
-          console.log('⏹️  Останавливаю трек:', track.kind);
-          track.stop();
-        });
+        streamRef.current.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
       }
-      
-      if (sourceRef.current) {
-        sourceRef.current.disconnect();
-        sourceRef.current = null;
-      }
-      
-      console.log('✅ Микрофон остановлен');
     }
   }, [recOn]);
 
-  // ---------- UI ----------
   const showGreeting = (currentChat?.messages.length ?? 0) === 0;
   const filteredChats = chats.filter((c) =>
     (c.title || 'Новый чат').toLowerCase().includes(query.toLowerCase())
@@ -338,7 +277,6 @@ export default function Chat() {
 
   return (
     <div className="relative min-h-[100dvh]">
-      {/* Мобильный бекдроп для закрытия меню тапом */}
       {sidebarOpen && (
         <div
           className="fixed inset-0 z-30 bg-black/40 md:hidden"
@@ -347,7 +285,6 @@ export default function Chat() {
         />
       )}
 
-      {/* Плавающая кнопка гамбургера (когда меню скрыто) */}
       {!sidebarOpen && (
         <button
           className="fab-menu"
@@ -359,7 +296,6 @@ export default function Chat() {
         </button>
       )}
 
-      {/* Сайдбар */}
       <aside
         className={clsx(
           'fixed inset-y-0 left-0 z-40 w-72 border-r border-border bg-panel transform transition-transform duration-200',
@@ -441,9 +377,7 @@ export default function Chat() {
         </div>
       </aside>
 
-      {/* Основная панель */}
       <main className={mainClasses}>
-        {/* Верхняя линия */}
         <header className="safe-top flex items-center gap-2 px-4 py-3 border-b border-border">
           <button
             className="p-2 rounded hover:bg-panelAlt"
@@ -456,12 +390,10 @@ export default function Chat() {
           <h1 className="text-lg font-semibold">AI Assistant Chat</h1>
         </header>
 
-        {/* Сообщения: отдельная прокрутка, нижний паддинг = высоте композитора */}
         <div
           className="flex-1 overflow-y-auto overflow-x-hidden p-4"
           style={{ paddingBottom: composerH + 16 }}
         >
-          {/* Приветственный экран */}
           {showGreeting && (
             <div className="max-w-3xl mx-auto mt-10 text-center animate-fadeIn">
               <h2 className="text-3xl font-semibold mb-2">Здравствуйте, чем могу помочь сегодня?</h2>
@@ -469,7 +401,6 @@ export default function Chat() {
             </div>
           )}
 
-          {/* Сообщения */}
           <div className="max-w-3xl mx-auto">
             {currentChat?.messages.map((m, i) => (
               <div key={i} className={clsx('group mb-4 max-w-3xl', m.role === 'user' && 'ml-auto')}>
@@ -497,13 +428,11 @@ export default function Chat() {
         </div>
       </main>
 
-      {/* НИЖНЯЯ ПАНЕЛЬ */}
       <div
         ref={composerRef}
         className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-border bg-panel"
       >
         <div className="max-w-3xl mx-auto p-3">
-          {/* Эквалайзер (если микрофон активен) */}
           {recOn && (
             <div className="mb-3 flex justify-center">
               <AudioVisualizer isActive={recOn} audioContext={audioContext || undefined} analyser={analyser || undefined} />
@@ -511,7 +440,6 @@ export default function Chat() {
           )}
 
           <div className="flex items-end gap-3">
-            {/* Большая кнопка микрофона слева */}
             <button
               className={clsx(
                 'p-4 rounded-xl border-2 transition-all duration-200 flex-shrink-0',
@@ -526,7 +454,6 @@ export default function Chat() {
               <Mic size={28} className={recOn ? 'text-white' : 'text-text'} />
             </button>
 
-            {/* Поле для ввода текста в центре */}
             <div className="flex-1">
               <textarea
                 ref={textareaRef}
@@ -539,7 +466,6 @@ export default function Chat() {
               />
             </div>
 
-            {/* Кнопка отправки справа */}
             <button
               className="p-4 rounded-xl bg-zinc-200 text-zinc-900 hover:opacity-90 disabled:opacity-50 transition-opacity flex-shrink-0"
               onClick={sendMessage}
@@ -555,7 +481,6 @@ export default function Chat() {
     </div>
   );
 
-  // ---------- helpers ----------
   async function copyToClipboard(content: string) {
     try { await navigator.clipboard.writeText(content); } catch {}
   }
@@ -575,57 +500,3 @@ export default function Chat() {
 async function safeText(res: Response) {
   try { return await res.text(); } catch { return ''; }
 }
-EOF
-cat /mnt/user-data/outputs/Chat_ИСПРАВЛЕННЫЙ_С_ОТЛАДКОЙ.tsx | head -50
-Output
-
-'use client';
-
-import { useEffect, useMemo, useRef, useState } from 'react';
-import clsx from 'clsx';
-import Markdown from './Markdown';
-import AudioVisualizer from './AudioVisualizer';
-import {
-  Copy, Mic, Send, Trash2, Plus, Menu, Search, Clock, List,
-} from 'lucide-react';
-
-type Role = 'user' | 'assistant';
-type Msg = { role: Role; content: string };
-type Chat = { id: string; title: string; messages: Msg[]; updatedAt: number };
-
-const STORAGE_KEY = 'chats_v2';
-
-const genId = () =>
-  (typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : Math.random().toString(36).slice(2) + Date.now().toString(36));
-
-export default function Chat() {
-  const [chats, setChats] = useState<Chat[]>([]);
-  const [currentId, setCurrentId] = useState<string | null>(null);
-  const [input, setInput] = useState('');
-  const [sending, setSending] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [recOn, setRecOn] = useState(false);
-  const [query, setQuery] = useState('');
-  const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
-  const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
-
-  const [composerH, setComposerH] = useState<number>(88);
-
-  const currentChat = useMemo(
-    () => chats.find((c) => c.id === currentId) || null,
-    [chats, currentId]
-  );
-
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const bottomRef = useRef<HTMLDivElement | null>(null);
-  const recRef = useRef<any>(null);
-  const composerRef = useRef<HTMLDivElement | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-
-  // ---------- загрузка/сохранение ----------
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
