@@ -19,22 +19,20 @@ export async function POST(req: Request) {
     }
 
     // Если API ключ не установлен, используем текст сообщения
-    if (!process.env.ANTHROPIC_API_KEY) {
-      console.warn('ANTHROPIC_API_KEY не установлен, используется текст сообщения');
+    if (!process.env.OPENAI_API_KEY) {
+      console.warn('OPENAI_API_KEY не установлен, используется текст сообщения');
       const autoTitle = userText.substring(0, 50).split('\n')[0];
       return Response.json({ title: autoTitle || 'Новый чат' });
     }
 
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+        'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-3-5-sonnet-20241022',
-        max_tokens: 100,
+        model: 'gpt-3.5-turbo',
         messages: [
           {
             role: 'user',
@@ -45,19 +43,21 @@ export async function POST(req: Request) {
 Название:`,
           },
         ],
+        max_tokens: 50,
+        temperature: 0.7,
       }),
     });
 
     if (!response.ok) {
-      console.error('Ошибка API Anthropic:', response.status, response.statusText);
+      console.error('Ошибка API OpenAI:', response.status, response.statusText);
       const autoTitle = userText.substring(0, 50).split('\n')[0];
       return Response.json({ title: autoTitle || 'Новый чат' });
     }
 
     const data = await response.json();
 
-    if (data.content && data.content.length > 0 && data.content[0].text) {
-      const title = data.content[0].text.trim().substring(0, 100);
+    if (data.choices && data.choices.length > 0 && data.choices[0].message.content) {
+      const title = data.choices[0].message.content.trim().substring(0, 100);
       if (title) {
         return Response.json({ title });
       }
