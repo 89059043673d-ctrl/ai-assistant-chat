@@ -6,7 +6,6 @@ export async function POST(req: Request) {
       return Response.json({ title: 'Новый чат' });
     }
 
-    // Берём первое сообщение пользователя
     const firstUserMessage = messages.find((m: any) => m.role === 'user');
     
     if (!firstUserMessage) {
@@ -15,16 +14,16 @@ export async function POST(req: Request) {
 
     const userText = firstUserMessage.content;
 
-    // Отправляем запрос в API для генерации названия
-    const response = await fetch('https://api.anthropic.com/v1/messages/create', {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'x-api-key': process.env.ANTHROPIC_API_KEY || '',
+        'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },
       body: JSON.stringify({
         model: 'claude-3-5-sonnet-20241022',
-        max_tokens: 50,
+        max_tokens: 100,
         messages: [
           {
             role: 'user',
