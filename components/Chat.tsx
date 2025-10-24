@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 import Markdown from './Markdown';
-import AudioVisualizer from './AudioVisualizer';
 import { Copy, Mic, Send, Trash2, Plus, Menu, Search, Clock, List } from 'lucide-react';
 
 type Role = 'user' | 'assistant';
@@ -25,8 +24,6 @@ export default function Chat() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [recOn, setRecOn] = useState(false);
   const [query, setQuery] = useState('');
-  const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
-  const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
   const [composerH, setComposerH] = useState<number>(88);
 
   const currentChat = useMemo(
@@ -38,7 +35,6 @@ export default function Chat() {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const recRef = useRef<any>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
     try {
@@ -203,121 +199,76 @@ export default function Chat() {
     });
   }
 
+  // МИКРОФОН - ТОЛЬКО Speech Recognition, без Web Audio
   function toggleRec() {
     if (recOn) {
-      if (recRef.current) {
-        try {
-          recRef.current.abort();
-        } catch {
-          try {
-            recRef.current.stop();
-          } catch {}
-        }
-        recRef.current = null;
-      }
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => {
-          try {
-            track.stop();
-          } catch {}
-        });
-        streamRef.current = null;
-      }
-      setRecOn(false);
+      stopListening();
     } else {
-      setRecOn(true);
+      startListening();
     }
   }
 
-  useEffect(() => {
-    if (!recOn) return;
-
-    if (typeof window === 'undefined') return;
-
+  function startListening() {
     const SpeechRecognitionClass =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
     if (!SpeechRecognitionClass) {
       alert('Speech Recognition не поддерживается браузером');
-      setRecOn(false);
       return;
     }
 
-    navigator.mediaDevices
-      .getUserMedia({ audio: true })
-      .then((stream) => {
-        streamRef.current = stream;
+    const recognition = new SpeechRecognitionClass();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'ru-RU';
 
-        const ac = new (window.AudioContext || (window as any).webkitAudioContext)();
-        const analyserNode = ac.createAnalyser();
-        analyserNode.fftSize = 256;
+    recognition.onstart = () => {
+      console.log('✅ Слушаю...');
+      setRecOn(true);
+    };
 
-        const source = ac.createMediaStreamAudioSource(stream);
-        source.connect(analyserNode);
-        analyserNode.connect(ac.destination);
+    recognition.onresult = (event: any) => {
+      let transcript = '';
 
-        setAudioContext(ac);
-        setAnalyser(analyserNode);
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const isFinal = event.results[i].isFinal;
+        const transcriptPart = event.results[i][0].transcript;
 
-        const recognition = new SpeechRecognitionClass();
-        recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.lang = 'ru-RU';
-
-        recognition.onstart = () => {
-          console.log('✅ Микрофон запущен, слушаю...');
-        };
-
-        recognition.onresult = (event: any) => {
-          let transcript = '';
-
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            const isFinal = event.results[i].isFinal;
-            const transcriptPart = event.results[i][0].transcript;
-
-            if (isFinal) {
-              transcript += transcriptPart + ' ';
-            }
-          }
-
-          if (transcript.trim()) {
-            console.log('📝 Текст:', transcript);
-            setInput((prev) => prev + transcript);
-          }
-        };
-
-        recognition.onerror = (event: any) => {
-          console.error('❌ Ошибка микрофона:', event.error);
-        };
-
-        recognition.onend = () => {
-          console.log('⏹️ Микрофон остановлен');
-          setRecOn(false);
-        };
-
-        recognition.start();
-        recRef.current = recognition;
-
-        console.log('✅ Speech Recognition запущен');
-      })
-      .catch((error) => {
-        console.error('❌ Ошибка доступа к микрофону:', error);
-        alert('Не удалось получить доступ к микрофону. Проверь разрешения браузера.');
-        setRecOn(false);
-      });
-
-    return () => {
-      if (recRef.current) {
-        try {
-          recRef.current.abort();
-        } catch {
-          try {
-            recRef.current.stop();
-          } catch {}
+        if (isFinal) {
+          transcript += transcriptPart + ' ';
         }
       }
+
+      if (transcript.trim()) {
+        console.log('📝 Текст:', transcript);
+        setInput((prev) => prev + transcript);
+      }
     };
-  }, [recOn]);
+
+    recognition.onerror = (event: any) => {
+      console.error('❌ Ошибка:', event.error);
+    };
+
+    recognition.onend = () => {
+      console.log('⏹️ Остановлено');
+      setRecOn(false);
+    };
+
+    recRef.current = recognition;
+    recognition.start();
+  }
+
+  function stopListening() {
+    if (recRef.current) {
+      try {
+        recRef.current.stop();
+      } catch (e) {
+        console.log('Ошибка при остановке:', e);
+      }
+      recRef.current = null;
+    }
+    setRecOn(false);
+  }
 
   const showGreeting = (currentChat?.messages.length ?? 0) === 0;
   const filteredChats = chats.filter((c) =>
@@ -486,16 +437,6 @@ export default function Chat() {
         className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-border bg-panel"
       >
         <div className="max-w-3xl mx-auto p-3">
-          {recOn && (
-            <div className="mb-3 flex justify-center">
-              <AudioVisualizer
-                isActive={recOn}
-                audioContext={audioContext || undefined}
-                analyser={analyser || undefined}
-              />
-            </div>
-          )}
-
           <div className="flex items-end gap-3">
             <button
               className={clsx(
