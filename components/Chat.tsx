@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 import Markdown from './Markdown';
-import { Copy, Mic, Send, Trash2, Plus, Menu, Search, Clock, List } from 'lucide-react';
+import { Copy, Mic, Send, Trash2, Plus, Menu, Search, Clock, List, ChevronDown } from 'lucide-react';
 
 type Role = 'user' | 'assistant';
 type Msg = { role: Role; content: string };
@@ -97,17 +97,17 @@ export default function Chat() {
   }, [composerRef.current]);
 
   useEffect(() => {
-    const handleScroll = (e: Event) => {
-      const target = e.target as HTMLDivElement;
-      const isNearBottom = target.scrollHeight - target.scrollTop - target.clientHeight < 100;
+    const container = messagesContainerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      const isNearBottom = scrollHeight - scrollTop - clientHeight < 150;
       setShowScrollButton(!isNearBottom);
     };
 
-    const container = messagesContainerRef.current;
-    if (container) {
-      container.addEventListener('scroll', handleScroll);
-      return () => container.removeEventListener('scroll', handleScroll);
-    }
+    container.addEventListener('scroll', handleScroll);
+    return () => container.removeEventListener('scroll', handleScroll);
   }, []);
 
   function measureComposer() {
@@ -230,6 +230,10 @@ export default function Chat() {
       if (currentId === id) setCurrentId(filtered[0].id);
       return filtered;
     });
+  }
+
+  function scrollToBottom() {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }
 
   function toggleRec() {
@@ -462,22 +466,18 @@ export default function Chat() {
             ))}
             <div ref={bottomRef} />
           </div>
-
-          {showScrollButton && (
-            <button
-              className="fixed bottom-20 right-4 p-3 rounded-full bg-red-500 hover:bg-red-600 text-white shadow-lg z-50"
-              onClick={() => {
-                bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-              }}
-              title="Вниз"
-              aria-label="Прокрутить вниз"
-            >
-              <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M7 10l5 5 5-5z" />
-              </svg>
-            </button>
-          )}
         </div>
+
+        {showScrollButton && (
+          <button
+            onClick={scrollToBottom}
+            className="absolute bottom-24 right-6 p-2 rounded-full bg-blue-600 hover:bg-blue-700 text-white shadow-lg z-40 transition-all"
+            title="Прокрутить вниз"
+            aria-label="Прокрутить вниз"
+          >
+            <ChevronDown size={24} />
+          </button>
+        )}
       </main>
 
       <div
