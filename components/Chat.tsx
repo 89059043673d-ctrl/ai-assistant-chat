@@ -403,16 +403,8 @@ export default function Chat() {
 
       <main className={mainClasses}>
         <header className="safe-top flex items-center gap-2 px-4 py-3 border-b border-border">
-          <button
-            className="p-2 rounded hover:bg-panelAlt"
-            onClick={() => setSidebarOpen((s) => !s)}
-            title="Меню"
-            aria-label="Меню"
-          >
-            <Menu size={18} />
-          </button>
-          <h1 className="text-lg font-semibold">AI Assistant Chat</h1>
-        </header>
+  <h1 className="text-lg font-semibold">AI Assistant Chat</h1>
+</header>>
 
         <div
           ref={messagesContainerRef}
