@@ -25,6 +25,7 @@ export default function Chat() {
   const [recOn, setRecOn] = useState(false);
   const [query, setQuery] = useState('');
   const [composerH, setComposerH] = useState<number>(88);
+  const [showScrollButton, setShowScrollButton] = useState(false);
 
   const currentChat = useMemo(
     () => chats.find((c) => c.id === currentId) || null,
@@ -35,6 +36,7 @@ export default function Chat() {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const recRef = useRef<any>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     try {
@@ -94,6 +96,20 @@ export default function Chat() {
     };
   }, [composerRef.current]);
 
+  useEffect(() => {
+    const handleScroll = (e: Event) => {
+      const target = e.target as HTMLDivElement;
+      const isNearBottom = target.scrollHeight - target.scrollTop - target.clientHeight < 100;
+      setShowScrollButton(!isNearBottom);
+    };
+
+    const container = messagesContainerRef.current;
+    if (container) {
+      container.addEventListener('scroll', handleScroll);
+      return () => container.removeEventListener('scroll', handleScroll);
+    }
+  }, []);
+
   function measureComposer() {
     const node = composerRef.current;
     if (!node) return;
@@ -112,7 +128,6 @@ export default function Chat() {
     const userMsg: Msg = { role: 'user', content: text };
     pushMessage(currentChat.id, userMsg);
 
-    // Если это первое сообщение, генерируем название диалога
     if (currentChat.messages.length === 0) {
       try {
         const titleRes = await fetch('/api/generate-title', {
@@ -412,7 +427,8 @@ export default function Chat() {
         </header>
 
         <div
-          className="flex-1 overflow-y-auto overflow-x-hidden p-4"
+          ref={messagesContainerRef}
+          className="flex-1 overflow-y-auto overflow-x-hidden p-4 relative"
           style={{ paddingBottom: composerH + 16 }}
         >
           {showGreeting && (
@@ -446,6 +462,21 @@ export default function Chat() {
             ))}
             <div ref={bottomRef} />
           </div>
+
+          {showScrollButton && (
+            <button
+              className="fixed bottom-28 right-8 p-3 rounded-full bg-zinc-700 hover:bg-zinc-600 text-white shadow-lg transition-all animate-bounce"
+              onClick={() => {
+                bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+              }}
+              title="Вниз"
+              aria-label="Прокрутить вниз"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+              </svg>
+            </button>
+          )}
         </div>
       </main>
 
