@@ -126,19 +126,28 @@ export default function Chat() {
     setInput('');
 
     const userMsg: Msg = { role: 'user', content: text };
+    
+    // Проверяем ДО добавления сообщения
+    const isFirstMessage = currentChat.messages.length === 0;
+
     pushMessage(currentChat.id, userMsg);
 
-    if (currentChat.messages.length === 0) {
+    // Генерируем название для нового диалога
+    if (isFirstMessage) {
       try {
         const titleRes = await fetch('/api/generate-title', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: [...currentChat.messages, userMsg] }),
+          body: JSON.stringify({ messages: [userMsg] }),
         });
 
-        const titleData = await titleRes.json();
-        if (titleData.title) {
-          touchChat(currentChat.id, (c) => ({ ...c, title: titleData.title }));
+        if (!titleRes.ok) {
+          console.error('Ошибка API при генерации названия:', titleRes.status);
+        } else {
+          const titleData = await titleRes.json();
+          if (titleData.title && titleData.title.trim()) {
+            touchChat(currentChat.id, (c) => ({ ...c, title: titleData.title }));
+          }
         }
       } catch (e) {
         console.error('Ошибка при генерации названия:', e);
@@ -247,62 +256,39 @@ export default function Chat() {
   function startListening() {
     const SpeechRecognitionClass =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-
     if (!SpeechRecognitionClass) {
-      alert('Speech Recognition не поддерживается браузером');
+      alert('Браузер не поддерживает распознавание речи');
       return;
     }
+    const rec = new SpeechRecognitionClass();
+    rec.lang = 'ru-RU';
+    rec.continuous = false;
+    rec.interimResults = true;
 
-    const recognition = new SpeechRecognitionClass();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = 'ru-RU';
-
-    recognition.onstart = () => {
-      console.log('✅ Слушаю...');
-      setRecOn(true);
-    };
-
-    recognition.onresult = (event: any) => {
-      let transcript = '';
-
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const isFinal = event.results[i].isFinal;
-        const transcriptPart = event.results[i][0].transcript;
-
-        if (isFinal) {
-          transcript += transcriptPart + ' ';
+    rec.onstart = () => setRecOn(true);
+    rec.onresult = (e: any) => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) {
+          setInput((p) => p + (p ? ' ' : '') + t);
+        } else {
+          interim += t;
         }
       }
-
-      if (transcript.trim()) {
-        console.log('📝 Текст:', transcript);
-        setInput((prev) => prev + transcript);
-      }
+      if (interim) setInput((p) => (p.split(' ').slice(0, -1).join(' ') || '') + interim);
     };
-
-    recognition.onerror = (event: any) => {
-      console.error('❌ Ошибка:', event.error);
-    };
-
-    recognition.onend = () => {
-      console.log('⏹️ Остановлено');
+    rec.onerror = (e: any) => {
+      console.error('Ошибка речи:', e.error);
       setRecOn(false);
     };
-
-    recRef.current = recognition;
-    recognition.start();
+    rec.onend = () => setRecOn(false);
+    rec.start();
+    recRef.current = rec;
   }
 
   function stopListening() {
-    if (recRef.current) {
-      try {
-        recRef.current.stop();
-      } catch (e) {
-        console.log('Ошибка при остановке:', e);
-      }
-      recRef.current = null;
-    }
+    recRef.current?.stop();
     setRecOn(false);
   }
 
