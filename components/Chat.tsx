@@ -4,9 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 import Markdown from './Markdown';
 import AudioVisualizer from './AudioVisualizer';
-import {
-  Copy, Mic, Send, Trash2, Plus, Menu, Search, Clock, List,
-} from 'lucide-react';
+import { Copy, Mic, Send, Trash2, Plus, Menu, Search, Clock, List } from 'lucide-react';
 
 type Role = 'user' | 'assistant';
 type Msg = { role: Role; content: string };
@@ -42,7 +40,6 @@ export default function Chat() {
   const composerRef = useRef<HTMLDivElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  // Load chats from localStorage
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -69,19 +66,16 @@ export default function Chat() {
     }
   }, []);
 
-  // Save chats to localStorage
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(chats));
     } catch {}
   }, [chats]);
 
-  // Auto scroll to bottom
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [currentChat?.messages.length]);
 
-  // Auto resize textarea
   useEffect(() => {
     const el = textareaRef.current;
     if (el) {
@@ -91,7 +85,6 @@ export default function Chat() {
     measureComposer();
   }, [input]);
 
-  // Measure composer height
   useEffect(() => {
     if (!composerRef.current) return;
     const ro = new ResizeObserver(() => measureComposer());
@@ -112,7 +105,6 @@ export default function Chat() {
     setComposerH(Math.max(56, Math.round(rect.height)));
   }
 
-  // Send message
   async function sendMessage() {
     if (!currentChat || sending) return;
     const text = input.trim();
@@ -211,71 +203,120 @@ export default function Chat() {
     });
   }
 
-  // Microphone with equalizer
   function toggleRec() {
-    setRecOn((on) => !on);
-  }
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const SR: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) return;
-
-    if (recOn && !recRef.current) {
-      const ac = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const analyserNode = ac.createAnalyser();
-      analyserNode.fftSize = 256;
-      setAudioContext(ac);
-      setAnalyser(analyserNode);
-
-      navigator.mediaDevices.getUserMedia({ audio: true })
-        .then((stream) => {
-          streamRef.current = stream;
-          const source = ac.createMediaStreamAudioSource(stream);
-          source.connect(analyserNode);
-          analyserNode.connect(ac.destination);
-
-          const r = new SR();
-          r.continuous = true;
-          r.interimResults = true;
-          r.lang = 'ru-RU';
-          
-          r.onresult = (e: any) => {
-            let final = '';
-            for (let i = e.resultIndex; i < e.results.length; i++) {
-              const chunk = e.results[i][0].transcript;
-              if (e.results[i].isFinal) {
-                final += chunk + ' ';
-              }
-            }
-            if (final) {
-              setInput((prev) => (prev ? prev + final : final));
-            }
-          };
-          
-          r.onerror = (e: any) => {
-            if (e.error === 'no-speech') {
-              r.stop();
-              r.start();
-            }
-          };
-          
-          r.start();
-          recRef.current = r;
-        })
-        .catch(() => {
-          setRecOn(false);
-        });
-    } else if (!recOn && recRef.current) {
+    if (recOn) {
       if (recRef.current) {
-        recRef.current.abort();
+        try {
+          recRef.current.abort();
+        } catch {
+          try {
+            recRef.current.stop();
+          } catch {}
+        }
         recRef.current = null;
       }
       if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current.getTracks().forEach((track) => {
+          try {
+            track.stop();
+          } catch {}
+        });
         streamRef.current = null;
       }
+      setRecOn(false);
+    } else {
+      setRecOn(true);
     }
+  }
+
+  useEffect(() => {
+    if (!recOn) return;
+
+    if (typeof window === 'undefined') return;
+
+    const SpeechRecognitionClass =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognitionClass) {
+      alert('Speech Recognition не поддерживается браузером');
+      setRecOn(false);
+      return;
+    }
+
+    navigator.mediaDevices
+      .getUserMedia({ audio: true })
+      .then((stream) => {
+        streamRef.current = stream;
+
+        const ac = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const analyserNode = ac.createAnalyser();
+        analyserNode.fftSize = 256;
+
+        const source = ac.createMediaStreamAudioSource(stream);
+        source.connect(analyserNode);
+        analyserNode.connect(ac.destination);
+
+        setAudioContext(ac);
+        setAnalyser(analyserNode);
+
+        const recognition = new SpeechRecognitionClass();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = 'ru-RU';
+
+        recognition.onstart = () => {
+          console.log('✅ Микрофон запущен, слушаю...');
+        };
+
+        recognition.onresult = (event: any) => {
+          let transcript = '';
+
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const isFinal = event.results[i].isFinal;
+            const transcriptPart = event.results[i][0].transcript;
+
+            if (isFinal) {
+              transcript += transcriptPart + ' ';
+            }
+          }
+
+          if (transcript.trim()) {
+            console.log('📝 Текст:', transcript);
+            setInput((prev) => prev + transcript);
+          }
+        };
+
+        recognition.onerror = (event: any) => {
+          console.error('❌ Ошибка микрофона:', event.error);
+        };
+
+        recognition.onend = () => {
+          console.log('⏹️ Микрофон остановлен');
+          setRecOn(false);
+        };
+
+        recognition.start();
+        recRef.current = recognition;
+
+        console.log('✅ Speech Recognition запущен');
+      })
+      .catch((error) => {
+        console.error('❌ Ошибка доступа к микрофону:', error);
+        alert('Не удалось получить доступ к микрофону. Проверь разрешения браузера.');
+        setRecOn(false);
+      });
+
+    return () => {
+      if (recRef.current) {
+        try {
+          recRef.current.abort();
+        } catch {
+          try {
+            recRef.current.stop();
+          } catch {}
+        }
+      }
+    };
   }, [recOn]);
 
   const showGreeting = (currentChat?.messages.length ?? 0) === 0;
@@ -314,7 +355,6 @@ export default function Chat() {
           'fixed inset-y-0 left-0 z-40 w-72 border-r border-border bg-panel transform transition-transform duration-200',
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         )}
-        aria-hidden={!sidebarOpen}
       >
         <div className="flex items-center justify-between p-3 border-b border-border">
           <div className="font-semibold">Диалоги</div>
@@ -448,7 +488,11 @@ export default function Chat() {
         <div className="max-w-3xl mx-auto p-3">
           {recOn && (
             <div className="mb-3 flex justify-center">
-              <AudioVisualizer isActive={recOn} audioContext={audioContext || undefined} analyser={analyser || undefined} />
+              <AudioVisualizer
+                isActive={recOn}
+                audioContext={audioContext || undefined}
+                analyser={analyser || undefined}
+              />
             </div>
           )}
 
@@ -495,7 +539,9 @@ export default function Chat() {
   );
 
   async function copyToClipboard(content: string) {
-    try { await navigator.clipboard.writeText(content); } catch {}
+    try {
+      await navigator.clipboard.writeText(content);
+    } catch {}
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -511,5 +557,9 @@ export default function Chat() {
 }
 
 async function safeText(res: Response) {
-  try { return await res.text(); } catch { return ''; }
+  try {
+    return await res.text();
+  } catch {
+    return '';
+  }
 }
