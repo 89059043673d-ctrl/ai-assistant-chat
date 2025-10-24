@@ -112,6 +112,24 @@ export default function Chat() {
     const userMsg: Msg = { role: 'user', content: text };
     pushMessage(currentChat.id, userMsg);
 
+    // Если это первое сообщение, генерируем название диалога
+    if (currentChat.messages.length === 0) {
+      try {
+        const titleRes = await fetch('/api/generate-title', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messages: [...currentChat.messages, userMsg] }),
+        });
+
+        const titleData = await titleRes.json();
+        if (titleData.title) {
+          touchChat(currentChat.id, (c) => ({ ...c, title: titleData.title }));
+        }
+      } catch (e) {
+        console.error('Ошибка при генерации названия:', e);
+      }
+    }
+
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -199,7 +217,6 @@ export default function Chat() {
     });
   }
 
-  // МИКРОФОН - ТОЛЬКО Speech Recognition, без Web Audio
   function toggleRec() {
     if (recOn) {
       stopListening();
