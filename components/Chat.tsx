@@ -404,7 +404,7 @@ export default function Chat() {
       <main className={mainClasses}>
         <header className="safe-top flex items-center gap-2 px-4 py-3 border-b border-border">
   <h1 className="text-lg font-semibold">AI Assistant Chat</h1>
-</header>>
+</header>
 
         <div
           ref={messagesContainerRef}
