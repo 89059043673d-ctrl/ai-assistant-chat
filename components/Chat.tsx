@@ -29,7 +29,6 @@ export default function Chat() {
   const [query, setQuery] = useState('');
   const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
-
   const [composerH, setComposerH] = useState<number>(88);
 
   const currentChat = useMemo(
@@ -43,6 +42,7 @@ export default function Chat() {
   const composerRef = useRef<HTMLDivElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
+  // Load chats from localStorage
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -69,16 +69,19 @@ export default function Chat() {
     }
   }, []);
 
+  // Save chats to localStorage
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(chats));
     } catch {}
   }, [chats]);
 
+  // Auto scroll to bottom
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [currentChat?.messages.length]);
 
+  // Auto resize textarea
   useEffect(() => {
     const el = textareaRef.current;
     if (el) {
@@ -88,6 +91,7 @@ export default function Chat() {
     measureComposer();
   }, [input]);
 
+  // Measure composer height
   useEffect(() => {
     if (!composerRef.current) return;
     const ro = new ResizeObserver(() => measureComposer());
@@ -108,6 +112,7 @@ export default function Chat() {
     setComposerH(Math.max(56, Math.round(rect.height)));
   }
 
+  // Send message
   async function sendMessage() {
     if (!currentChat || sending) return;
     const text = input.trim();
@@ -206,6 +211,7 @@ export default function Chat() {
     });
   }
 
+  // Microphone with equalizer
   function toggleRec() {
     setRecOn((on) => !on);
   }
@@ -233,22 +239,27 @@ export default function Chat() {
           r.continuous = true;
           r.interimResults = true;
           r.lang = 'ru-RU';
+          
           r.onresult = (e: any) => {
             let final = '';
             for (let i = e.resultIndex; i < e.results.length; i++) {
               const chunk = e.results[i][0].transcript;
-              if (e.results[i].isFinal) final += chunk + ' ';
+              if (e.results[i].isFinal) {
+                final += chunk + ' ';
+              }
             }
-            if (final) setInput((prev) => (prev ? prev + final : final));
-          };
-          r.onend = () => {
-            setRecOn(false);
-            recRef.current = null;
-            if (streamRef.current) {
-              streamRef.current.getTracks().forEach((track) => track.stop());
-              streamRef.current = null;
+            if (final) {
+              setInput((prev) => (prev ? prev + final : final));
             }
           };
+          
+          r.onerror = (e: any) => {
+            if (e.error === 'no-speech') {
+              r.stop();
+              r.start();
+            }
+          };
+          
           r.start();
           recRef.current = r;
         })
@@ -256,8 +267,10 @@ export default function Chat() {
           setRecOn(false);
         });
     } else if (!recOn && recRef.current) {
-      recRef.current.stop();
-      recRef.current = null;
+      if (recRef.current) {
+        recRef.current.abort();
+        recRef.current = null;
+      }
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
