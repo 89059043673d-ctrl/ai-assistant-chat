@@ -465,15 +465,15 @@ export default function Chat() {
 
           {showScrollButton && (
             <button
-              className="fixed bottom-28 right-8 p-3 rounded-full bg-zinc-700 hover:bg-zinc-600 text-white shadow-lg transition-all animate-bounce"
+              className="fixed bottom-20 right-4 p-3 rounded-full bg-red-500 hover:bg-red-600 text-white shadow-lg z-50"
               onClick={() => {
                 bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
               }}
               title="Вниз"
               aria-label="Прокрутить вниз"
             >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+              <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M7 10l5 5 5-5z" />
               </svg>
             </button>
           )}
