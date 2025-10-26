@@ -3,11 +3,11 @@ import { NextRequest } from 'next/server';
 
 export const runtime = 'nodejs';
 // Максимально допустимая длительность выполнения функции на Vercel.
-// Выставь 120 (2 мин) или 180 (3 мин). На некоторых планах доступно и больше.
+// Выставлено на 180 (3 мин).
 export const maxDuration = 180;
 export const dynamic = 'force-dynamic';
 
-const CHAT_TIMEOUT_MS = Number(process.env.CHAT_TIMEOUT_MS ?? '120000'); // дефолт: 2 мин
+const CHAT_TIMEOUT_MS = Number(process.env.CHAT_TIMEOUT_MS ?? '180000'); // дефолт: 3 мин
 
 const N8N_WEBHOOK_URL =
   process.env.N8N_WEBHOOK_URL ||
